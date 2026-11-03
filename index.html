@@ -31,6 +31,9 @@ button.danger{color:#b42318;border-color:#f1b5ae}
 .fld{display:flex;align-items:center;gap:4px;white-space:nowrap}
 .num,select{height:34px;border:1px solid #b9c3d3;border-radius:6px;padding:0 6px;font:inherit;background:#fff;color:#1b2430}
 .num{width:76px}
+.member-props{display:grid;grid-template-columns:1fr;gap:6px}
+.member-props .fld{justify-content:space-between;width:100%}
+.member-props .num{width:180px}
 .muted{color:#5a6678;flex-basis:100%}
 small.muted{font-size:12px}
 #main{flex:1;display:flex;min-height:0;position:relative}
@@ -44,6 +47,7 @@ small.muted{font-size:12px}
   #topActions{padding:2px 6px}
   #opts{max-height:32dvh;overflow-y:auto;padding:4px 8px;gap:4px 8px}
   #opts button{min-height:34px}
+  .member-props .num{width:180px}
   #resbar{max-height:18dvh;overflow-y:auto;padding:4px 8px;gap:4px 8px}
   #status{font-size:12px}
   #status{justify-content:flex-end;min-height:28px}

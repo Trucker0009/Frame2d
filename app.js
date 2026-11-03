@@ -888,7 +888,8 @@
       edit(() => { m.E = sec.E; m.A = sec.A; m.I = sec.I; sectionAssignments[k] = id; });
     });
     s.append(row(el('b', {}, 'Section'), sectionSelect), row(el('button', { onclick: openSections }, 'Create / manage sections')));
-    s.append(row(pnum('E', m.E, v => { delete sectionAssignments[k]; m.E = v; }), pnum('A', m.A, v => { delete sectionAssignments[k]; m.A = v; }), pnum('I', m.I, v => { delete sectionAssignments[k]; m.I = v; })));
+    const memberProps = row(pnum('E', m.E, v => { delete sectionAssignments[k]; m.E = v; }), pnum('A', m.A, v => { delete sectionAssignments[k]; m.A = v; }), pnum('I', m.I, v => { delete sectionAssignments[k]; m.I = v; }));
+    memberProps.classList.add('member-props'); s.append(memberProps);
     s.append(row(pchk('Hinge at start', m.hingeStart, v => { m.hingeStart = v; }, m.truss), pchk('Hinge at end', m.hingeEnd, v => { m.hingeEnd = v; }, m.truss)));
     s.append(el('button', { onclick: () => edit(() => { doc.members.forEach(o => { o.E = m.E; o.A = m.A; o.I = m.I; }); }) }, 'Copy E, A, I to all members'));
     s = psec(P); s.append(el('b', {}, 'Loads on this member'));
