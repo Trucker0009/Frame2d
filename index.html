@@ -56,6 +56,16 @@ table.res td:first-child,table.res th:first-child{text-align:left}
 #modal[hidden]{display:none}
 .card{background:#fff;border-radius:12px;padding:14px;max-width:440px;width:92%;max-height:88%;overflow:auto}
 .card h3{margin:0 0 8px}
+body.dark{color:#e5e7eb;background:#111827}
+body.dark #opts{background:#1f2937}
+body.dark #panel,body.dark #resbar,body.dark #status{background:#172033;color:#e5e7eb;border-color:#374151}
+body.dark #cvwrap{background:#111827}
+body.dark button,body.dark .num,body.dark select{background:#253044;color:#e5e7eb;border-color:#52617a}
+body.dark button.active{background:#2563eb;color:#fff;border-color:#2563eb}
+body.dark .loadrow{background:#202b3e;border-color:#3b4a62}
+body.dark .card{background:#172033;color:#e5e7eb}
+body.dark .muted,body.dark table.res th{color:#aab6c8}
+body.dark #modal{background:rgba(0,0,0,.62)}
 </style>
 </head>
 <body>
@@ -76,7 +86,7 @@ table.res td:first-child,table.res th:first-child{text-align:left}
   <button id="bZin" title="Zoom in">＋</button>
   <button id="bZout" title="Zoom out">－</button>
   <button id="bInfo" title="Info / results panel">ⓘ</button>
-  <button id="bMenu" title="Settings, files, examples">⚙ Menu</button>
+  <button id="bMenu" title="Menu: new, save, load, examples, theme">☰ Menu</button>
 </div>
 <div id="opts"></div>
 <div id="main">
