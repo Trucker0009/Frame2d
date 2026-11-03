@@ -29,6 +29,7 @@
   let view = { ox: 80, oy: 400, s: 50 }, viewInit = false;
   let results = null, mode = 'model', diagScale = 1, flip = false, influenceResult = null;
   const influenceOpt = { pathMode: 'member', movingMember: 0, startNode: 0, endNode: 1, targetKind: 'reaction', reactionNode: 0, reactionComponent: 'ry', sectionMember: 0, sectionX: 3, sectionComponent: 'M', angle: 90, magnitude: 1, samples: 101, flipCurve: false };
+  let influenceOptionsOpen = true;
   let undoStack = [], redoStack = [];
   let panelOpen = window.innerWidth > 900, detailsOpen = false, spaceDown = false;
   const KEY = 'frame2d_v1';
@@ -185,8 +186,7 @@
     cx.lineWidth = 3; cx.strokeStyle = theme === 'dark' ? 'rgba(17,24,39,.95)' : 'rgba(255,255,255,.9)'; cx.strokeText(t, x, y);
     cx.fillStyle = col || '#333'; cx.fillText(t, x, y);
   }
-  function head(tx, ty, dx, dy) {
-    const s = 9, w = 4.5;
+  function head(tx, ty, dx, dy, s = 9, w = 4.5) {
     cx.beginPath(); cx.moveTo(tx, ty); cx.lineTo(tx - dx * s - dy * w, ty - dy * s + dx * w); cx.lineTo(tx - dx * s + dy * w, ty - dy * s - dx * w); cx.closePath(); cx.fill();
   }
   function arrow(tx, ty, dx, dy, len, col) {
@@ -397,16 +397,55 @@
 
   function drawReactions() {
     const R = results.res.reactions; let rmax = 0;
-    for (const r of Object.values(R)) rmax = Math.max(rmax, Math.abs(r.fx), Math.abs(r.fy), Math.abs(r.mz));
+    for (const r of Object.values(R)) rmax = Math.max(rmax, Math.abs(r.fx), Math.abs(r.fy), Math.abs(r.rn || 0), Math.abs(r.mz));
     if (rmax <= 0) return;
+    const col = theme === 'dark' ? '#4ade80' : '#0b6b3a';
     for (const [k, r] of Object.entries(R)) {
       if (!doc.nodes[+k]) continue;
-      const [px, py] = nodeScr(+k), parts = [];
-      if (Math.abs(r.fx) > 1e-6 * rmax) parts.push('Rx=' + fmt(r.fx));
-      if (Math.abs(r.fy) > 1e-6 * rmax) parts.push('Ry=' + fmt(r.fy));
-      if (r.rn !== undefined) parts.push('R⊥=' + fmt(r.rn));
-      if (Math.abs(r.mz) > 1e-6 * rmax) parts.push('Mz=' + fmt(r.mz));
-      parts.forEach((t, i) => label(t, px + 20, py + 22 + i * 13, '#0b6b3a', 'left'));
+      const [px, py] = nodeScr(+k), len = v => 58 * (0.45 + Math.abs(v) / rmax * 0.55);
+      const reactionLabel = (t, x, y, align = 'center') => {
+        cx.font = 'bold 14px system-ui, sans-serif'; cx.textAlign = align; cx.textBaseline = 'middle';
+        cx.lineWidth = 4; cx.strokeStyle = theme === 'dark' ? 'rgba(17,24,39,.98)' : 'rgba(255,255,255,.98)'; cx.strokeText(t, x, y);
+        cx.fillStyle = col; cx.fillText(t, x, y);
+      };
+      const reactionArrow = (x, y, d, L, side) => {
+        let tx = x + d[0] * (L + 14), ty = y + d[1] * (L + 14);
+        if (side === 'right') tx = x + (d[0] > 0 ? L + 14 : 14);
+        if (side === 'below') ty = y + (d[1] > 0 ? L + 14 : 14);
+        const tail = [tx - d[0] * L, ty - d[1] * L];
+        cx.strokeStyle = col; cx.fillStyle = col; cx.lineWidth = 3.5; cx.lineCap = 'round';
+        cx.beginPath(); cx.moveTo(tail[0], tail[1]); cx.lineTo(tx, ty); cx.stroke();
+        head(tx, ty, d[0], d[1], 13, 6.5);
+        return tail;
+      };
+      const forceArrow = (fx, fy, x, y, text, side) => {
+        const d = scrDir(fx, fy); if (!d) return;
+        const L = len(Math.hypot(fx, fy)), gap = 14;
+        let ax = x, ay = y;
+        if (side === 'right') ax = x;
+        if (side === 'below') ay = y;
+        const tail = reactionArrow(ax, ay, d, L, side);
+        if (side === 'below') reactionLabel(text + '=' + fmt(Math.hypot(fx, fy)), tail[0], tail[1] + 22);
+        else reactionLabel(text + '=' + fmt(Math.hypot(fx, fy)), tail[0] - d[1] * 13, tail[1] + d[0] * 13);
+      };
+      if (r.rn !== undefined && Math.hypot(r.fx, r.fy) > 1e-9 * rmax) {
+        forceArrow(r.fx, r.fy, px, py, 'Rn');
+      } else {
+        if (Math.abs(r.fx) > 1e-6 * rmax) forceArrow(r.fx, 0, px, py, 'Rx', 'right');
+        if (Math.abs(r.fy) > 1e-6 * rmax) forceArrow(0, r.fy, px, py, 'Ry', 'below');
+      }
+      if (Math.abs(r.mz) > 1e-6 * rmax) {
+        const rad = 41, centerY = py + 30, positive = r.mz >= 0;
+        const startAngle = positive ? Math.PI : 0, endAngle = positive ? 0 : Math.PI;
+        cx.save(); cx.strokeStyle = col; cx.fillStyle = col; cx.lineWidth = 2; cx.lineCap = 'round';
+        cx.beginPath(); cx.arc(px, centerY, rad, startAngle, endAngle, positive); cx.stroke();
+        const ex = px + rad * Math.cos(endAngle), ey = centerY + rad * Math.sin(endAngle);
+        const tx = 0, ty = -1;
+        head(ex, ey, tx, ty, 13, 6.5);
+        const sx = px + rad * Math.cos(startAngle), sy = centerY + rad * Math.sin(startAngle);
+        reactionLabel('Mz=' + fmt(r.mz), sx, sy - 14);
+        cx.restore();
+      }
     }
   }
 
@@ -663,6 +702,7 @@
         samples: influenceOpt.samples,
       });
       msg('Influence line calculated. The green line shows the ordinates.', false);
+      if (window.innerWidth <= 900) { influenceOptionsOpen = false; refreshOptions(); }
       draw();
     } catch (e) {
       influenceResult = null;
@@ -694,6 +734,13 @@
         chk('Chain', () => opt.chain, v => { opt.chain = v; }),
         el('small', { class: 'muted' }, 'Frame = rigid joints (carries bending). Truss = pinned ends (axial force only). Chain = each member starts where the last one ended.'));
     } else if (tool === 'influence') {
+      if (window.innerWidth <= 900) {
+        o.append(el('button', { class: 'mobile-toggle', onclick: () => { influenceOptionsOpen = !influenceOptionsOpen; refreshOptions(); } }, influenceOptionsOpen ? 'Hide influence controls ▲' : 'Show influence controls ▼'));
+        if (!influenceOptionsOpen) {
+          o.append(el('small', { class: 'muted' }, influenceResult ? 'Influence line is visible below. Tap Show influence controls to edit it.' : 'Set the moving load and target, then show the controls.'));
+          return;
+        }
+      }
       const memberItems = doc.members.map((m, k) => [String(k), 'M' + (k + 1) + ' (N' + (m.i + 1) + ' → N' + (m.j + 1) + ')']);
       const nodeItems = doc.nodes.map((n, k) => [String(k), 'N' + (k + 1)]);
       const supportItems = Object.entries(doc.supports).filter(([n, s]) => C.supportKind(s) !== 'none').map(([n]) => [n, 'N' + (+n + 1)]);
@@ -909,6 +956,48 @@
     structureName = name.trim() || 'Untitled structure';
     saveName(); loadDoc(C.newDoc()); closeMenu(); msg('New structure: ' + structureName + '.');
   }
+  const PROJECTS_KEY = 'frame2d_projects_v1';
+  function readProjects() {
+    try {
+      const p = JSON.parse(localStorage.getItem(PROJECTS_KEY) || '{}');
+      return p && typeof p === 'object' ? p : {};
+    } catch (e) { return {}; }
+  }
+  function writeProjects(p) {
+    try { localStorage.setItem(PROJECTS_KEY, JSON.stringify(p)); return true; } catch (e) { return false; }
+  }
+  function saveProject() {
+    let name = structureName;
+    if (!name || name === 'Untitled structure') name = prompt('Save structure as:', '');
+    if (name === null) return;
+    name = String(name || '').trim() || 'Untitled structure';
+    const projects = readProjects();
+    if (projects[name] && !confirm('Replace the saved project "' + name + '"?')) return;
+    projects[name] = { doc: clone(doc), S: clone(S), view: clone(view), savedAt: new Date().toISOString() };
+    if (!writeProjects(projects)) { msg('Could not save. The browser storage may be full.', true); return; }
+    structureName = name; saveName(); msg('Saved project: ' + name + '.'); closeMenu();
+  }
+  function loadProject(name) {
+    const p = readProjects()[name]; if (!p || !p.doc) return;
+    structureName = name; saveName(); Object.assign(S, p.S || {});
+    if (p.view && isFinite(p.view.s)) { view = p.view; viewInit = true; }
+    loadDoc(normalizeDoc(p.doc)); closeMenu(); msg('Loaded project: ' + name + '.');
+  }
+  function deleteProject(name) {
+    if (!confirm('Delete the saved project "' + name + '"?')) return;
+    const projects = readProjects(); delete projects[name]; writeProjects(projects); openProjectList();
+  }
+  function openProjectList() {
+    const M = $('modal'); M.replaceChildren(); M.hidden = false;
+    const projects = readProjects(), names = Object.keys(projects).sort((a, b) => a.localeCompare(b));
+    const list = names.length ? names.map(name => {
+      const when = projects[name].savedAt ? new Date(projects[name].savedAt).toLocaleString() : '';
+      return el('div', { class: 'project-row' }, el('div', {}, el('b', {}, name), el('small', { class: 'muted' }, when)),
+        el('button', { onclick: () => loadProject(name) }, 'Open'), el('button', { class: 'danger', onclick: () => deleteProject(name) }, 'Delete'));
+    }) : [el('small', { class: 'muted' }, 'No saved projects yet. Use Save to create one.')];
+    M.append(el('div', { class: 'card' }, el('h3', {}, 'Load saved project'), ...list,
+      el('div', { class: 'row' }, el('button', { class: 'primary', onclick: closeMenu }, 'Close'))));
+  }
   function saveFile() {
     const blob = new Blob([JSON.stringify({ app: 'frame2d', version: 1, doc, S }, null, 1)], { type: 'application/json' });
     const filename = (structureName || 'structure').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || 'structure';
@@ -938,9 +1027,12 @@
       el('div', { class: 'row' }, el('b', {}, 'File')),
       el('div', { class: 'row' }, el('b', {}, 'Theme')),
       row(seg([['light', 'Light'], ['dark', 'Dark']], theme, setTheme)),
-      el('div', { class: 'row' }, el('b', {}, 'File')),
+      el('div', { class: 'row' }, el('b', {}, 'Project')),
       el('div', { class: 'row' }, el('b', {}, structureName)),
-      row(el('button', { onclick: newStructure }, 'New'), el('button', { onclick: openFile }, 'Load'), el('button', { onclick: saveFile }, 'Save')),
+      row(el('button', { onclick: newStructure }, 'New'), el('button', { onclick: openProjectList }, 'Load'), el('button', { onclick: saveProject }, 'Save')),
+      el('small', { class: 'muted' }, 'Projects are saved inside this browser on this device.'),
+      el('div', { class: 'row' }, el('b', {}, 'File backup')),
+      row(el('button', { onclick: openFile }, 'Import JSON'), el('button', { onclick: saveFile }, 'Export JSON')),
       el('div', { class: 'row' }, el('b', {}, 'Examples (replace the current model; Undo brings it back)')),
       row(el('button', { onclick: () => { loadDoc(buildExample('beam')); closeMenu(); } }, 'Beam + UDL'), el('button', { onclick: () => { loadDoc(buildExample('truss')); closeMenu(); } }, 'Truss'), el('button', { onclick: () => { loadDoc(buildExample('portal')); closeMenu(); } }, 'Portal frame'), el('button', { onclick: () => { loadDoc(buildExample('incl')); closeMenu(); } }, 'Inclined roller')),
       el('div', { class: 'row' }, el('button', { class: 'primary', onclick: closeMenu }, 'Close')));
