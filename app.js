@@ -32,6 +32,10 @@
   let undoStack = [], redoStack = [];
   let panelOpen = window.innerWidth > 900, detailsOpen = false, spaceDown = false;
   const KEY = 'frame2d_v1';
+  const THEME_KEY = 'frame2d_theme';
+  const NAME_KEY = 'frame2d_name';
+  let theme = 'light';
+  let structureName = 'Untitled structure';
 
   const HINTS = {
     select: 'Tap a node or member to edit it. Drag a node to move it. Drag empty space to pan; pinch or mouse wheel to zoom.',
@@ -55,13 +59,31 @@
     return o;
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify({ doc, S, view })); } catch (e) { /* ignore */ } }
+  function saveName() { try { localStorage.setItem(NAME_KEY, structureName); } catch (e) { /* ignore */ } }
+  function applyTheme() {
+    document.body.classList.toggle('dark', theme === 'dark');
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#111827' : '#1f3a5f');
+  }
+  function setTheme(v) {
+    theme = v === 'dark' ? 'dark' : 'light';
+    try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* ignore */ }
+    applyTheme();
+    if (!$('modal').hidden) openMenu(); else refreshOptions();
+    draw();
+  }
   function restore() {
     try {
-      const t = localStorage.getItem(KEY); if (!t) return;
-      const o = JSON.parse(t);
-      doc = normalizeDoc(o.doc); Object.assign(S, o.S || {});
-      if (o.view && isFinite(o.view.s)) { view = o.view; viewInit = true; }
+      const t = localStorage.getItem(KEY);
+      if (t) {
+        const o = JSON.parse(t);
+        doc = normalizeDoc(o.doc); Object.assign(S, o.S || {});
+        if (o.view && isFinite(o.view.s)) { view = o.view; viewInit = true; }
+      }
     } catch (e) { /* ignore */ }
+    try { theme = localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'; } catch (e) { theme = 'light'; }
+    try { structureName = localStorage.getItem(NAME_KEY) || 'Untitled structure'; } catch (e) { structureName = 'Untitled structure'; }
+    applyTheme();
   }
 
   /* ---------------- messages ---------------- */
@@ -160,7 +182,7 @@
   function line(a, b) { cx.beginPath(); cx.moveTo(a[0], a[1]); cx.lineTo(b[0], b[1]); cx.stroke(); }
   function label(t, x, y, col, align) {
     cx.font = '12px system-ui, sans-serif'; cx.textAlign = align || 'center'; cx.textBaseline = 'middle';
-    cx.lineWidth = 3; cx.strokeStyle = 'rgba(255,255,255,.9)'; cx.strokeText(t, x, y);
+    cx.lineWidth = 3; cx.strokeStyle = theme === 'dark' ? 'rgba(17,24,39,.95)' : 'rgba(255,255,255,.9)'; cx.strokeText(t, x, y);
     cx.fillStyle = col || '#333'; cx.fillText(t, x, y);
   }
   function head(tx, ty, dx, dy) {
@@ -186,7 +208,7 @@
   function render() {
     if (!W || !H) return;
     cx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    cx.clearRect(0, 0, W, H); cx.fillStyle = '#fff'; cx.fillRect(0, 0, W, H);
+    cx.clearRect(0, 0, W, H); cx.fillStyle = theme === 'dark' ? '#111827' : '#fff'; cx.fillRect(0, 0, W, H);
     drawGrid();
     let note = '';
     if (results && mode === 'defl') note = drawDeflected();
@@ -198,7 +220,7 @@
     drawNodes();
     if (results && S.react) drawReactions();
     drawCursor();
-    if (note) { cx.font = '13px system-ui, sans-serif'; cx.textAlign = 'left'; cx.textBaseline = 'top'; cx.fillStyle = '#1f3a5f'; cx.fillText(note, 10, 8); }
+    if (note) { cx.font = '13px system-ui, sans-serif'; cx.textAlign = 'left'; cx.textBaseline = 'top'; cx.fillStyle = theme === 'dark' ? '#93c5fd' : '#1f3a5f'; cx.fillText(note, 10, 8); }
   }
 
   function drawGrid() {
@@ -209,22 +231,22 @@
     let labelWs = ws;
     while (labelWs * view.s < 48) labelWs *= 2;
     const [x0, y0] = toWld(0, H), [x1, y1] = toWld(W, 0);
-    cx.lineWidth = 1; cx.strokeStyle = '#e8ebf0'; cx.beginPath();
+    cx.lineWidth = 1; cx.strokeStyle = theme === 'dark' ? '#263449' : '#e8ebf0'; cx.beginPath();
     for (let gx = Math.ceil(x0 / ws) * ws; gx <= x1; gx += ws) { const sx = Math.round(toScr(gx, 0)[0]) + .5; cx.moveTo(sx, 0); cx.lineTo(sx, H); }
     for (let gy = Math.ceil(y0 / ws) * ws; gy <= y1; gy += ws) { const sy = Math.round(toScr(0, gy)[1]) + .5; cx.moveTo(0, sy); cx.lineTo(W, sy); }
     cx.stroke();
-    cx.strokeStyle = '#b8c2d1'; cx.beginPath();
+    cx.strokeStyle = theme === 'dark' ? '#52617a' : '#b8c2d1'; cx.beginPath();
     const ax = toScr(0, 0);
     if (ax[0] >= 0 && ax[0] <= W) { cx.moveTo(Math.round(ax[0]) + .5, 0); cx.lineTo(Math.round(ax[0]) + .5, H); }
     if (ax[1] >= 0 && ax[1] <= H) { cx.moveTo(0, Math.round(ax[1]) + .5); cx.lineTo(W, Math.round(ax[1]) + .5); }
     cx.stroke();
     for (let gx = Math.ceil(x0 / labelWs) * labelWs; gx <= x1; gx += labelWs) {
       const sx = toScr(gx, 0)[0];
-      if (sx >= 0 && sx <= W) label(fmt(gx), sx, H - 10, '#64748b');
+      if (sx >= 0 && sx <= W) label(fmt(gx), sx, H - 10, theme === 'dark' ? '#94a3b8' : '#64748b');
     }
     for (let gy = Math.ceil(y0 / labelWs) * labelWs; gy <= y1; gy += labelWs) {
       const sy = toScr(0, gy)[1];
-      if (sy >= 0 && sy <= H) label(fmt(gy), 24, sy, '#64748b', 'right');
+      if (sy >= 0 && sy <= H) label(fmt(gy), 24, sy, theme === 'dark' ? '#94a3b8' : '#64748b', 'right');
     }
   }
 
@@ -234,9 +256,9 @@
     doc.members.forEach((m, k) => {
       const a = nodeScr(m.i), b = nodeScr(m.j), L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, u = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
       if (sel && sel.t === 'member' && sel.id === k) { cx.strokeStyle = 'rgba(239,68,68,.35)'; cx.lineWidth = 10; line(a, b); }
-      cx.strokeStyle = light ? '#94a3b8' : (m.truss ? '#9a3412' : '#1f3a5f'); cx.lineWidth = m.truss ? 2.5 : 3.5; line(a, b);
+      cx.strokeStyle = light ? '#94a3b8' : (m.truss ? (theme === 'dark' ? '#fb923c' : '#9a3412') : (theme === 'dark' ? '#60a5fa' : '#1f3a5f')); cx.lineWidth = m.truss ? 2.5 : 3.5; line(a, b);
       if (L > 30) {
-        cx.lineWidth = 1.5; cx.strokeStyle = '#1f3a5f'; cx.fillStyle = '#fff';
+        cx.lineWidth = 1.5; cx.strokeStyle = theme === 'dark' ? '#93c5fd' : '#1f3a5f'; cx.fillStyle = theme === 'dark' ? '#253044' : '#fff';
         if (m.truss || m.hingeStart) { cx.beginPath(); cx.arc(a[0] + u[0] * 9, a[1] + u[1] * 9, 4.5, 0, 7); cx.fill(); cx.stroke(); }
         if (m.truss || m.hingeEnd) { cx.beginPath(); cx.arc(b[0] - u[0] * 9, b[1] - u[1] * 9, 4.5, 0, 7); cx.fill(); cx.stroke(); }
       }
@@ -282,8 +304,8 @@
       const [px, py] = toScr(n.x, n.y);
       const isSel = sel && sel.t === 'node' && sel.id === i;
       if (isSel) { cx.fillStyle = 'rgba(239,68,68,.3)'; cx.beginPath(); cx.arc(px, py, 11, 0, 7); cx.fill(); }
-      cx.fillStyle = '#111827'; cx.beginPath(); cx.arc(px, py, 3.8, 0, 7); cx.fill();
-      if (S.labels) label('N' + (i + 1), px + 12, py - 11, '#0f172a', 'left');
+      cx.fillStyle = theme === 'dark' ? '#e5e7eb' : '#111827'; cx.beginPath(); cx.arc(px, py, 3.8, 0, 7); cx.fill();
+      if (S.labels) label('N' + (i + 1), px + 12, py - 11, theme === 'dark' ? '#cbd5e1' : '#0f172a', 'left');
     });
   }
 
@@ -320,7 +342,7 @@
       if (kind === 'inclined') { o = inclOrientation(n, s.ang); kind = 'roller'; }
       if (kind === 'spring' && !s.ky && s.kx) o = [-1, 0];
       cx.save(); cx.translate(px, py); cx.rotate(Math.atan2(-o[0], o[1]));
-      cx.strokeStyle = '#111827'; cx.fillStyle = '#fff'; cx.lineWidth = 2; cx.lineCap = 'butt';
+      cx.strokeStyle = theme === 'dark' ? '#e5e7eb' : '#111827'; cx.fillStyle = theme === 'dark' ? '#253044' : '#fff'; cx.lineWidth = 2; cx.lineCap = 'butt';
       const ground = (y, hw) => { cx.beginPath(); cx.moveTo(-hw, y); cx.lineTo(hw, y); for (let x = -hw; x <= hw - 4; x += 6) { cx.moveTo(x + 6, y); cx.lineTo(x, y + 6); } cx.stroke(); };
       const tri = (h, hw) => { cx.beginPath(); cx.moveTo(0, 0); cx.lineTo(-hw, h); cx.lineTo(hw, h); cx.closePath(); cx.fill(); cx.stroke(); };
       if (kind === 'fixed') { cx.lineWidth = 3.5; cx.beginPath(); cx.moveTo(-14, 0); cx.lineTo(14, 0); cx.stroke(); cx.lineWidth = 1.5; cx.beginPath(); for (let x = -14; x < 14; x += 6) { cx.moveTo(x + 6, 0); cx.lineTo(x, 8); } cx.stroke(); }
@@ -881,16 +903,23 @@
     return d;
   }
   function loadDoc(d) { edit(() => { doc = d; }); sel = null; pending = null; fitView(); }
+  function newStructure() {
+    const name = prompt('Name this structure:', structureName === 'Untitled structure' ? '' : structureName);
+    if (name === null) return;
+    structureName = name.trim() || 'Untitled structure';
+    saveName(); loadDoc(C.newDoc()); closeMenu(); msg('New structure: ' + structureName + '.');
+  }
   function saveFile() {
     const blob = new Blob([JSON.stringify({ app: 'frame2d', version: 1, doc, S }, null, 1)], { type: 'application/json' });
-    const a = el('a', { href: URL.createObjectURL(blob), download: 'structure.json' }); document.body.append(a); a.click(); a.remove();
+    const filename = (structureName || 'structure').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || 'structure';
+    const a = el('a', { href: URL.createObjectURL(blob), download: filename + '.json' }); document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 3000);
   }
   function openFile() {
     const i = el('input', { type: 'file', accept: '.json,application/json' });
     i.addEventListener('change', () => {
       const f = i.files[0]; if (!f) return;
-      f.text().then(t => { const o = JSON.parse(t); if (o.S) Object.assign(S, o.S); loadDoc(normalizeDoc(o.doc || o)); closeMenu(); msg('File opened.'); }).catch(() => msg('Could not read that file.', true));
+      f.text().then(t => { const o = JSON.parse(t); if (o.S) Object.assign(S, o.S); structureName = f.name.replace(/\.json$/i, '') || 'Untitled structure'; saveName(); loadDoc(normalizeDoc(o.doc || o)); closeMenu(); msg('Loaded: ' + structureName + '.'); }).catch(() => msg('Could not read that file.', true));
     });
     i.click();
   }
@@ -907,7 +936,11 @@
       row(fnum('E', () => S.E, v => { if (v > 0) setS('E')(v); }), fnum('A', () => S.A, v => { if (v > 0) setS('A')(v); }), fnum('I', () => S.I, v => { if (v > 0) setS('I')(v); })),
       el('small', { class: 'muted' }, 'Use consistent units (for kN and m: E in kN/m², A in m², I in m⁴). Steel E ≈ 2e8 kN/m².'),
       el('div', { class: 'row' }, el('b', {}, 'File')),
-      row(el('button', { onclick: () => { if (confirm('Start a new empty model?')) { loadDoc(C.newDoc()); closeMenu(); } } }, 'New'), el('button', { onclick: openFile }, 'Open…'), el('button', { onclick: saveFile }, 'Save…')),
+      el('div', { class: 'row' }, el('b', {}, 'Theme')),
+      row(seg([['light', 'Light'], ['dark', 'Dark']], theme, setTheme)),
+      el('div', { class: 'row' }, el('b', {}, 'File')),
+      el('div', { class: 'row' }, el('b', {}, structureName)),
+      row(el('button', { onclick: newStructure }, 'New'), el('button', { onclick: openFile }, 'Load'), el('button', { onclick: saveFile }, 'Save')),
       el('div', { class: 'row' }, el('b', {}, 'Examples (replace the current model; Undo brings it back)')),
       row(el('button', { onclick: () => { loadDoc(buildExample('beam')); closeMenu(); } }, 'Beam + UDL'), el('button', { onclick: () => { loadDoc(buildExample('truss')); closeMenu(); } }, 'Truss'), el('button', { onclick: () => { loadDoc(buildExample('portal')); closeMenu(); } }, 'Portal frame'), el('button', { onclick: () => { loadDoc(buildExample('incl')); closeMenu(); } }, 'Inclined roller')),
       el('div', { class: 'row' }, el('button', { class: 'primary', onclick: closeMenu }, 'Close')));
@@ -946,7 +979,7 @@
   if (window.ResizeObserver) new ResizeObserver(resize).observe(cv.parentElement);
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) navigator.serviceWorker.register('sw.js').catch(() => { });
 
-  restore();
+  applyTheme(); restore();
   refreshOptions(); refreshButtons(); refreshPanel(); resize(); msg(HINTS.select);
   window.Frame2D = { get doc() { return doc; }, get results() { return results; }, get view() { return view; }, solve, setTool, fitView, buildExample, loadDoc }; // used by tests
 })();
