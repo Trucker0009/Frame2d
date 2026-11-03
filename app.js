@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   const C = window.SA2DCore;
+  const I = window.SA2DInfluence;
   const $ = id => document.getElementById(id);
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const numStr = v => String(+(+v).toPrecision(12));
@@ -26,7 +27,8 @@
   const inclAng = () => opt.inclInput === 'angle' ? +opt.inclAngle : +(Math.atan2(opt.rise, opt.run) * 180 / Math.PI).toFixed(6);   // slope surface angle from Angle or Rise / Run
   let tool = 'select', sel = null, pending = null, hover = null;
   let view = { ox: 80, oy: 400, s: 50 }, viewInit = false;
-  let results = null, mode = 'model', diagScale = 1, flip = false;
+  let results = null, mode = 'model', diagScale = 1, flip = false, influenceResult = null;
+  const influenceOpt = { pathMode: 'member', movingMember: 0, startNode: 0, endNode: 1, targetKind: 'reaction', reactionNode: 0, reactionComponent: 'ry', sectionMember: 0, sectionX: 3, sectionComponent: 'M', angle: 90, magnitude: 1, samples: 101, flipCurve: false };
   let undoStack = [], redoStack = [];
   let panelOpen = window.innerWidth > 900, detailsOpen = false, spaceDown = false;
   const KEY = 'frame2d_v1';
@@ -38,6 +40,7 @@
     support: 'Pick a support type, then tap a node.',
     load: 'Pick a load type, set the values, then tap a node or a member.',
     delete: 'Tap a node (its members go too) or a member to delete it.',
+    influence: 'Calculate an influence line for a unit point load moving along one member.',
   };
 
   /* ---------------- persistence ---------------- */
@@ -77,6 +80,7 @@
   }
   function afterChange() {
     results = null; mode = 'model';
+    influenceResult = null;
     if (sel && ((sel.t === 'node' && !doc.nodes[sel.id]) || (sel.t === 'member' && !doc.members[sel.id]))) sel = null;
     save(); refreshButtons(); refreshPanel(); draw();
   }
@@ -188,6 +192,7 @@
     if (results && mode === 'defl') note = drawDeflected();
     else if (results && (mode === 'N' || mode === 'V' || mode === 'M')) note = drawDiagram(mode);
     drawMembers();
+    if (influenceResult) note = drawInfluence();
     if (mode === 'model' || !results) drawLoads();
     drawSupports();
     drawNodes();
@@ -237,6 +242,39 @@
       }
       if (S.labels) label('M' + (k + 1), (a[0] + b[0]) / 2 - u[1] * 12, (a[1] + b[1]) / 2 + u[0] * 12, '#64748b');
     });
+  }
+
+  function drawInfluence() {
+    const r = influenceResult;
+    if (!r || !r.samples.length) return 'Influence line';
+    const max = Math.max(...r.samples.map(s => Math.abs(s.value)), 1e-12), scale = Math.min(100, 70 / max);
+    const base = s => memberPoint(s.member, s.a);
+    const normal = k => { const a = nodeScr(doc.members[k].i), b = nodeScr(doc.members[k].j), L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [-(b[1] - a[1]) / L, (b[0] - a[0]) / L]; };
+    const point = s => { const p = base(s), nv = normal(s.member), sign = influenceOpt.flipCurve ? -1 : 1; return [p[0] + nv[0] * s.value * scale * sign, p[1] + nv[1] * s.value * scale * sign]; };
+    cx.save(); cx.strokeStyle = '#16a34a'; cx.fillStyle = '#16a34a'; cx.lineWidth = 2; cx.lineJoin = 'round';
+    cx.beginPath(); r.samples.forEach((s, i) => { const p = point(s); if (i) cx.lineTo(p[0], p[1]); else cx.moveTo(p[0], p[1]); }); cx.stroke();
+    cx.strokeStyle = 'rgba(22,163,74,.45)'; cx.lineWidth = 1; cx.setLineDash([4, 4]);
+    r.path.segments.forEach(s => line(memberPoint(s.member, s.reverse ? s.length : 0), memberPoint(s.member, s.reverse ? 0 : s.length))); cx.setLineDash([]);
+    const first = r.samples[0], last = r.samples[r.samples.length - 1];
+    const projection = s => line(base(s), point(s));
+    const stationStep = Math.max(1, Math.floor((r.samples.length - 1) / 10));
+    cx.strokeStyle = 'rgba(22,163,74,.45)'; cx.lineWidth = 1;
+    for (let i = 0; i < r.samples.length; i += stationStep) {
+      for (const j of [Math.max(0, i - 1), i, Math.min(r.samples.length - 1, i + 1)]) projection(r.samples[j]);
+    }
+    cx.strokeStyle = '#16a34a'; cx.lineWidth = 2;
+    projection(first); projection(last);
+    const showValue = s => { const p = point(s), nv = normal(s.member), sign = influenceOpt.flipCurve ? -1 : 1; label(fmt(s.value), p[0] + nv[0] * 14 * sign, p[1] + nv[1] * 14 * sign, '#15803d'); };
+    for (let pct = 0; pct <= 100; pct += 10) showValue(r.samples[Math.round((r.samples.length - 1) * pct / 100)]);
+    r.jumps.forEach(j => {
+      const before = point(j.before), after = point(j.after), nv = normal(j.before.member), m = doc.members[j.before.member], a = nodeScr(m.i), b = nodeScr(m.j), L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, tx = (b[0] - a[0]) / L, ty = (b[1] - a[1]) / L, sign = influenceOpt.flipCurve ? -1 : 1;
+      label(fmt(j.before.value), before[0] - tx * 18 + nv[0] * 14 * sign, before[1] - ty * 18 + nv[1] * 14 * sign, '#15803d', 'right');
+      label(fmt(j.after.value), after[0] + tx * 18 + nv[0] * 14 * sign, after[1] + ty * 18 + nv[1] * 14 * sign, '#15803d', 'left');
+    });
+    cx.restore();
+    const t = r.target;
+    const targetText = t.kind === 'reaction' ? 'N' + (t.node + 1) + ' ' + t.component.toUpperCase() : 'M' + (t.member + 1) + ' at ' + fmt(t.x) + ' ' + S.lu + ' ' + t.component;
+    return 'Influence line: ' + targetText + ' (unit load angle ' + fmt(r.angle) + '°)';
   }
 
   function drawNodes() {
@@ -577,6 +615,11 @@
     i.addEventListener('change', () => { const v = parseFloat(i.value); if (isFinite(v)) set(v); i.value = numStr(get()); });
     return el('label', { class: 'fld' }, label, i);
   }
+  function fsel(label, get, set, items) {
+    const i = el('select', {}, items.map(([v, t]) => el('option', { value: v }, t))); i.value = String(get());
+    i.addEventListener('change', () => set(i.value));
+    return el('label', { class: 'fld' }, label, i);
+  }
   function fopt(label, get, set) {
     const i = el('input', { type: 'number', step: 'any', class: 'num', placeholder: 'full' }); i.value = get() === '' ? '' : numStr(get());
     i.addEventListener('change', () => { const t = i.value.trim(), v = parseFloat(t); set(t === '' || !isFinite(v) ? '' : v); i.value = get() === '' ? '' : numStr(get()); });
@@ -584,6 +627,38 @@
   }
   const seg = (items, cur, pick) => el('div', { class: 'seg' }, items.map(([v, l]) => el('button', { class: v === cur ? 'active' : '', onclick: () => pick(v) }, l)));
   const chk = (label, get, set) => { const i = el('input', { type: 'checkbox' }); i.checked = !!get(); i.addEventListener('change', () => set(i.checked)); return el('label', { class: 'fld' }, i, label); };
+
+  function calculateInfluence() {
+    try {
+      const target = influenceOpt.targetKind === 'reaction'
+        ? { kind: 'reaction', node: influenceOpt.reactionNode, component: influenceOpt.reactionComponent }
+        : { kind: 'section', member: influenceOpt.sectionMember, x: influenceOpt.sectionX, component: influenceOpt.sectionComponent };
+      influenceResult = I.calculate(doc, {
+        ...(influenceOpt.pathMode === 'nodes' ? { startNode: influenceOpt.startNode, endNode: influenceOpt.endNode } : { movingMember: influenceOpt.movingMember }),
+        target,
+        angle: influenceOpt.angle,
+        magnitude: influenceOpt.magnitude,
+        samples: influenceOpt.samples,
+      });
+      msg('Influence line calculated. The green line shows the ordinates.', false);
+      draw();
+    } catch (e) {
+      influenceResult = null;
+      msg(String((e && e.message) || e), true);
+      draw();
+    }
+  }
+
+  function reactionComponents(node) {
+    const s = doc.supports[node], kind = C.supportKind(s);
+    if (kind === 'pin') return [['rx', 'Rx'], ['ry', 'Ry']];
+    if (kind === 'roller') return [['ry', 'Ry']];
+    if (kind === 'rollerV') return [['rx', 'Rx']];
+    if (kind === 'inclined') return [['rn', 'Rn (normal)'], ['rx', 'Rx'], ['ry', 'Ry']];
+    if (kind === 'fixed') return [['rx', 'Rx'], ['ry', 'Ry'], ['mz', 'Mz']];
+    if (kind === 'custom') return [s.rx && ['rx', 'Rx'], s.ry && ['ry', 'Ry'], s.rr && ['mz', 'Mz']].filter(Boolean);
+    return [];
+  }
 
   function refreshOptions() {
     const o = $('opts'); o.replaceChildren();
@@ -596,6 +671,35 @@
       o.append(seg([['frame', 'Frame'], ['truss', 'Truss']], opt.memberType, v => { opt.memberType = v; refreshOptions(); }),
         chk('Chain', () => opt.chain, v => { opt.chain = v; }),
         el('small', { class: 'muted' }, 'Frame = rigid joints (carries bending). Truss = pinned ends (axial force only). Chain = each member starts where the last one ended.'));
+    } else if (tool === 'influence') {
+      const memberItems = doc.members.map((m, k) => [String(k), 'M' + (k + 1) + ' (N' + (m.i + 1) + ' → N' + (m.j + 1) + ')']);
+      const nodeItems = doc.nodes.map((n, k) => [String(k), 'N' + (k + 1)]);
+      const supportItems = Object.entries(doc.supports).filter(([n, s]) => C.supportKind(s) !== 'none').map(([n]) => [n, 'N' + (+n + 1)]);
+      if (supportItems.length && !supportItems.some(([n]) => +n === influenceOpt.reactionNode)) influenceOpt.reactionNode = +supportItems[0][0];
+      const componentItems = reactionComponents(influenceOpt.reactionNode);
+      if (componentItems.length && !componentItems.some(([v]) => v === influenceOpt.reactionComponent)) influenceOpt.reactionComponent = componentItems[0][0];
+      o.append(
+        seg([['member', 'One member'], ['nodes', 'Node to node']], influenceOpt.pathMode, v => { influenceOpt.pathMode = v; refreshOptions(); }),
+        ...(influenceOpt.pathMode === 'member' ? [fsel('Moving load on', () => influenceOpt.movingMember, v => { influenceOpt.movingMember = +v; if (influenceOpt.targetKind === 'section') influenceOpt.sectionMember = +v; refreshOptions(); }, memberItems)] : [
+          fsel('From node', () => influenceOpt.startNode, v => { influenceOpt.startNode = +v; }, nodeItems),
+          fsel('To node', () => influenceOpt.endNode, v => { influenceOpt.endNode = +v; }, nodeItems)
+        ]),
+        fnum('Load angle (deg)', () => influenceOpt.angle, v => { influenceOpt.angle = v; }),
+        fnum('Load magnitude', () => influenceOpt.magnitude, v => { influenceOpt.magnitude = v; }),
+        fnum('Load positions', () => influenceOpt.samples, v => { influenceOpt.samples = v; }),
+        seg([['reaction', 'Reaction'], ['section', 'Section N/V/M']], influenceOpt.targetKind, v => { influenceOpt.targetKind = v; refreshOptions(); }),
+        chk('Flip curve', () => influenceOpt.flipCurve, v => { influenceOpt.flipCurve = v; draw(); })
+      );
+      if (influenceOpt.targetKind === 'reaction') {
+        o.append(fsel('Reaction at', () => influenceOpt.reactionNode, v => { influenceOpt.reactionNode = +v; refreshOptions(); }, supportItems),
+          fsel('Component', () => influenceOpt.reactionComponent, v => { influenceOpt.reactionComponent = v; }, componentItems));
+      } else {
+        o.append(fsel('Section member', () => influenceOpt.sectionMember, v => { influenceOpt.sectionMember = +v; refreshOptions(); }, memberItems),
+          fnum('Section x (' + S.lu + ')', () => influenceOpt.sectionX, v => { influenceOpt.sectionX = v; }),
+          seg([['N', 'N'], ['V', 'V'], ['M', 'M']], influenceOpt.sectionComponent, v => { influenceOpt.sectionComponent = v; refreshOptions(); }));
+      }
+      o.append(el('button', { class: 'primary', onclick: calculateInfluence }, 'Calculate influence line'),
+        el('small', { class: 'muted' }, 'Load positions = number of solves/points along the path. More points make a smoother curve but take longer. Angle 90° means downward. Existing model loads are ignored.'));
     } else if (tool === 'support') {
       o.append(seg([['pin', 'Pin'], ['roller', 'Roller'], ['rollerV', 'Roller ↕'], ['incl', 'Roller ∠'], ['fixed', 'Fixed'], ['none', 'None']], opt.support, v => { opt.support = v; refreshOptions(); }),
         ...(opt.support === 'incl' ? [
@@ -624,7 +728,7 @@
   }
   function sysSeg() { return seg([['global', 'Global'], ['local', 'Local']], opt.system, v => { opt.system = v; refreshOptions(); }); }
 
-  function setTool(t) { tool = t; pending = null; refreshOptions(); refreshButtons(); msg(HINTS[t]); draw(); }
+  function setTool(t) { if (t !== 'influence') influenceResult = null; tool = t; pending = null; refreshOptions(); refreshButtons(); msg(HINTS[t]); draw(); }
 
   function refreshButtons() {
     document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
@@ -813,7 +917,7 @@
 
   /* ---------------- wiring ---------------- */
   document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => { if (b.dataset.tool === tool && tool === 'member') { pending = null; msg('Stopped. Tap a start point.'); draw(); } else setTool(b.dataset.tool); }));
-  document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { if (!results && b.dataset.mode !== 'model') return; mode = b.dataset.mode; refreshButtons(); draw(); }));
+  document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { if (!results && b.dataset.mode !== 'model') return; influenceResult = null; mode = b.dataset.mode; refreshButtons(); draw(); }));
   $('bUndo').addEventListener('click', undo); $('bRedo').addEventListener('click', redo);
   $('bSolve').addEventListener('click', solve); $('bFit').addEventListener('click', fitView);
   $('bZin').addEventListener('click', () => zoomAt(W / 2, H / 2, 1.3)); $('bZout').addEventListener('click', () => zoomAt(W / 2, H / 2, 1 / 1.3));
@@ -834,7 +938,7 @@
     if (mod || e.altKey) return;
     if (k === 'escape') { if (pending) { pending = null; msg('Stopped.'); draw(); } else { sel = null; setTool('select'); refreshPanel(); } return; }
     if (k === 'delete' || k === 'backspace') { deleteSelected(); e.preventDefault(); return; }
-    const map = { v: 'select', n: 'node', m: 'member', s: 'support', l: 'load', d: 'delete' };
+    const map = { v: 'select', n: 'node', m: 'member', s: 'support', l: 'load', i: 'influence', d: 'delete' };
     if (map[k]) setTool(map[k]); else if (k === 'f') fitView();
   });
   window.addEventListener('keyup', e => { if (e.key === ' ') spaceDown = false; });
