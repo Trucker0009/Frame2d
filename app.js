@@ -37,6 +37,8 @@
   const NAME_KEY = 'frame2d_name';
   let theme = 'light';
   let structureName = 'Untitled structure';
+  let sectionLibrary = [];
+  let sectionAssignments = {};
 
   const HINTS = {
     select: 'Tap a node or member to edit it. Drag a node to move it. Drag empty space to pan; pinch or mouse wheel to zoom.',
@@ -59,7 +61,7 @@
     o.nodeLoads = (d.nodeLoads || []).filter(l => o.nodes[l.node]);
     return o;
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify({ doc, S, view })); } catch (e) { /* ignore */ } }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify({ doc, S, view, sections: sectionLibrary, assignments: sectionAssignments })); } catch (e) { /* ignore */ } }
   function saveName() { try { localStorage.setItem(NAME_KEY, structureName); } catch (e) { /* ignore */ } }
   function applyTheme() {
     document.body.classList.toggle('dark', theme === 'dark');
@@ -79,6 +81,8 @@
       if (t) {
         const o = JSON.parse(t);
         doc = normalizeDoc(o.doc); Object.assign(S, o.S || {});
+        sectionLibrary = Array.isArray(o.sections) ? o.sections : [];
+        sectionAssignments = o.assignments && typeof o.assignments === 'object' ? o.assignments : {};
         if (o.view && isFinite(o.view.s)) { view = o.view; viewInit = true; }
       }
     } catch (e) { /* ignore */ }
@@ -874,7 +878,17 @@
     const ts = el('select', {}, el('option', { value: 'frame' }, 'Frame (rigid joints)'), el('option', { value: 'truss' }, 'Truss (pinned ends)')); ts.value = m.truss ? 'truss' : 'frame';
     ts.addEventListener('change', () => edit(() => { m.truss = ts.value === 'truss'; }));
     s.append(row(el('b', {}, 'Type'), ts));
-    s.append(row(pnum('E', m.E, v => { m.E = v; }), pnum('A', m.A, v => { m.A = v; }), pnum('I', m.I, v => { m.I = v; })));
+    const assigned = sectionLibrary.find(sec => sec.id === sectionAssignments[k]);
+    const sectionSelect = el('select', {}, [el('option', { value: '' }, sectionLibrary.length ? 'Manual values' : 'No sections created'), ...sectionLibrary.map(sec => el('option', { value: sec.id }, sec.name))]);
+    sectionSelect.value = assigned ? assigned.id : '';
+    sectionSelect.disabled = !sectionLibrary.length;
+    sectionSelect.addEventListener('change', () => {
+      const id = sectionSelect.value, sec = sectionLibrary.find(x => x.id === id);
+      if (!sec) { delete sectionAssignments[k]; refreshPanel(); return; }
+      edit(() => { m.E = sec.E; m.A = sec.A; m.I = sec.I; sectionAssignments[k] = id; });
+    });
+    s.append(row(el('b', {}, 'Section'), sectionSelect), row(el('button', { onclick: openSections }, 'Create / manage sections')));
+    s.append(row(pnum('E', m.E, v => { delete sectionAssignments[k]; m.E = v; }), pnum('A', m.A, v => { delete sectionAssignments[k]; m.A = v; }), pnum('I', m.I, v => { delete sectionAssignments[k]; m.I = v; })));
     s.append(row(pchk('Hinge at start', m.hingeStart, v => { m.hingeStart = v; }, m.truss), pchk('Hinge at end', m.hingeEnd, v => { m.hingeEnd = v; }, m.truss)));
     s.append(el('button', { onclick: () => edit(() => { doc.members.forEach(o => { o.E = m.E; o.A = m.A; o.I = m.I; }); }) }, 'Copy E, A, I to all members'));
     s = psec(P); s.append(el('b', {}, 'Loads on this member'));
@@ -949,12 +963,13 @@
     }
     return d;
   }
-  function loadDoc(d) { edit(() => { doc = d; }); sel = null; pending = null; fitView(); }
+  function loadDoc(d, keepSections) { if (!keepSections) sectionAssignments = {}; edit(() => { doc = d; }); sel = null; pending = null; fitView(); }
   function newStructure() {
     const name = prompt('Name this structure:', structureName === 'Untitled structure' ? '' : structureName);
     if (name === null) return;
     structureName = name.trim() || 'Untitled structure';
-    saveName(); loadDoc(C.newDoc()); closeMenu(); msg('New structure: ' + structureName + '.');
+    sectionLibrary = []; sectionAssignments = {};
+    saveName(); loadDoc(C.newDoc(), true); closeMenu(); msg('New structure: ' + structureName + '.');
   }
   const PROJECTS_KEY = 'frame2d_projects_v1';
   function readProjects() {
@@ -973,19 +988,45 @@
     name = String(name || '').trim() || 'Untitled structure';
     const projects = readProjects();
     if (projects[name] && !confirm('Replace the saved project "' + name + '"?')) return;
-    projects[name] = { doc: clone(doc), S: clone(S), view: clone(view), savedAt: new Date().toISOString() };
+    projects[name] = { doc: clone(doc), S: clone(S), view: clone(view), sections: clone(sectionLibrary), assignments: clone(sectionAssignments), savedAt: new Date().toISOString() };
     if (!writeProjects(projects)) { msg('Could not save. The browser storage may be full.', true); return; }
     structureName = name; saveName(); msg('Saved project: ' + name + '.'); closeMenu();
   }
   function loadProject(name) {
     const p = readProjects()[name]; if (!p || !p.doc) return;
     structureName = name; saveName(); Object.assign(S, p.S || {});
+    sectionLibrary = Array.isArray(p.sections) ? p.sections : [];
+    sectionAssignments = p.assignments && typeof p.assignments === 'object' ? p.assignments : {};
     if (p.view && isFinite(p.view.s)) { view = p.view; viewInit = true; }
-    loadDoc(normalizeDoc(p.doc)); closeMenu(); msg('Loaded project: ' + name + '.');
+    loadDoc(normalizeDoc(p.doc), true); closeMenu(); msg('Loaded project: ' + name + '.');
   }
   function deleteProject(name) {
     if (!confirm('Delete the saved project "' + name + '"?')) return;
     const projects = readProjects(); delete projects[name]; writeProjects(projects); openProjectList();
+  }
+  function createSection() {
+    const name = prompt('Section name:', 'Rectangular section'); if (name === null) return;
+    const E = parseFloat(prompt('E (modulus of elasticity):', S.E));
+    const A = parseFloat(prompt('A (area):', S.A));
+    const I = parseFloat(prompt('I (second moment of area):', S.I));
+    if (!name.trim() || !isFinite(E) || E <= 0 || !isFinite(A) || A <= 0 || !isFinite(I) || I <= 0) { msg('Enter a name and positive E, A, and I values.', true); return; }
+    sectionLibrary.push({ id: 'section-' + Date.now(), name: name.trim(), E, A, I });
+    save(); openSections();
+  }
+  function deleteSection(id) {
+    const sec = sectionLibrary.find(s => s.id === id); if (!sec || !confirm('Delete section "' + sec.name + '"?')) return;
+    sectionLibrary = sectionLibrary.filter(s => s.id !== id);
+    Object.keys(sectionAssignments).forEach(k => { if (sectionAssignments[k] === id) delete sectionAssignments[k]; });
+    save(); openSections(); refreshPanel();
+  }
+  function openSections() {
+    const M = $('modal'); M.replaceChildren(); M.hidden = false;
+    const rows = sectionLibrary.length ? sectionLibrary.map(s => el('div', { class: 'project-row' },
+      el('div', {}, el('b', {}, s.name), el('small', { class: 'muted' }, 'E=' + fmt(s.E) + ', A=' + fmt(s.A) + ', I=' + fmt(s.I))),
+      el('button', { class: 'danger', onclick: () => deleteSection(s.id) }, 'Delete'))) : [el('small', { class: 'muted' }, 'No sections created in this project yet.')];
+    M.append(el('div', { class: 'card' }, el('h3', {}, 'Sections in ' + structureName),
+      el('small', { class: 'muted' }, 'Create reusable E, A, I definitions, then assign them from a member panel.'),
+      ...rows, el('div', { class: 'row' }, el('button', { class: 'primary', onclick: createSection }, 'Create section'), el('button', { onclick: closeMenu }, 'Close'))));
   }
   function openProjectList() {
     const M = $('modal'); M.replaceChildren(); M.hidden = false;
@@ -1008,7 +1049,7 @@
     const i = el('input', { type: 'file', accept: '.json,application/json' });
     i.addEventListener('change', () => {
       const f = i.files[0]; if (!f) return;
-      f.text().then(t => { const o = JSON.parse(t); if (o.S) Object.assign(S, o.S); structureName = f.name.replace(/\.json$/i, '') || 'Untitled structure'; saveName(); loadDoc(normalizeDoc(o.doc || o)); closeMenu(); msg('Loaded: ' + structureName + '.'); }).catch(() => msg('Could not read that file.', true));
+      f.text().then(t => { const o = JSON.parse(t); if (o.S) Object.assign(S, o.S); structureName = f.name.replace(/\.json$/i, '') || 'Untitled structure'; sectionLibrary = []; saveName(); loadDoc(normalizeDoc(o.doc || o)); closeMenu(); msg('Loaded: ' + structureName + '.'); }).catch(() => msg('Could not read that file.', true));
     });
     i.click();
   }
@@ -1029,7 +1070,7 @@
       row(seg([['light', 'Light'], ['dark', 'Dark']], theme, setTheme)),
       el('div', { class: 'row' }, el('b', {}, 'Project')),
       el('div', { class: 'row' }, el('b', {}, structureName)),
-      row(el('button', { onclick: newStructure }, 'New'), el('button', { onclick: openProjectList }, 'Load'), el('button', { onclick: saveProject }, 'Save')),
+      row(el('button', { onclick: newStructure }, 'New'), el('button', { onclick: openProjectList }, 'Load'), el('button', { onclick: saveProject }, 'Save'), el('button', { onclick: openSections }, 'Sections')),
       el('small', { class: 'muted' }, 'Projects are saved inside this browser on this device.'),
       el('div', { class: 'row' }, el('b', {}, 'File backup')),
       row(el('button', { onclick: openFile }, 'Import JSON'), el('button', { onclick: saveFile }, 'Export JSON')),
@@ -1071,7 +1112,21 @@
   if (window.ResizeObserver) new ResizeObserver(resize).observe(cv.parentElement);
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) navigator.serviceWorker.register('sw.js').catch(() => { });
 
-  applyTheme(); restore();
+  function installMobileBackPrompt() {
+    if (window.innerWidth > 900 || !window.history || !window.history.pushState) return;
+    history.pushState({ frame2dBackGuard: true }, '', location.href);
+    const onBack = () => {
+      if (confirm('Exit the app?')) {
+        window.removeEventListener('popstate', onBack);
+        setTimeout(() => history.back(), 0);
+      } else {
+        history.pushState({ frame2dBackGuard: true }, '', location.href);
+      }
+    };
+    window.addEventListener('popstate', onBack);
+  }
+
+  applyTheme(); restore(); installMobileBackPrompt();
   refreshOptions(); refreshButtons(); refreshPanel(); resize(); msg(HINTS.select);
   window.Frame2D = { get doc() { return doc; }, get results() { return results; }, get view() { return view; }, solve, setTool, fitView, buildExample, loadDoc }; // used by tests
 })();
