@@ -728,7 +728,7 @@
 
   function refreshOptions() {
     const o = $('opts'); o.replaceChildren();
-    if (tool === 'select' || tool === 'delete') { o.append(el('small', { class: 'muted' }, HINTS[tool])); return; }
+    if (tool === 'select' || tool === 'delete') return;
     if (tool === 'node') {
       o.append(fnum('X', () => opt.nx, v => { opt.nx = v; }), fnum('Y', () => opt.ny, v => { opt.ny = v; }),
         el('button', { onclick: () => { let added = false; edit(() => { const n = doc.nodes.length; C.addNodeAt(doc, opt.nx, opt.ny); if (doc.nodes.length === n) return false; added = true; }); msg(added ? 'Node added.' : 'There is already a node there.', !added); } }, 'Add'),
