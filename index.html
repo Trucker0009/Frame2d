@@ -19,7 +19,9 @@ button.active{background:#2563eb;color:#fff;border-color:#2563eb}
 button.primary{background:#16a34a;color:#fff;border-color:#16a34a;font-weight:600}
 button.danger{color:#b42318;border-color:#f1b5ae}
 #bar{display:flex;gap:6px;padding:6px;overflow-x:auto;background:#1f3a5f;flex:none;align-items:center}
+#bar button{min-height:38px;padding:0 10px;font-size:14px}
 #bar .sep{width:1px;align-self:stretch;background:#ffffff40;margin:0 2px;flex:none}
+#bMenu{order:99}
 #topActions{display:flex;justify-content:flex-start;gap:6px;padding:2px 6px;background:#fff;flex:none}
 #topActions button{min-height:32px;width:38px;padding:0}
 #opts{display:flex;flex-wrap:wrap;gap:6px 12px;padding:6px 8px;background:#e6ecf5;align-items:center;flex:none;min-height:46px}
@@ -42,8 +44,11 @@ small.muted{font-size:12px}
 #panel{width:330px;overflow-y:auto;background:#fff;border-left:1px solid #cfd6e2;padding:8px;flex:none}
 #panel.hidden{display:none}
 @media (max-width:900px){
-  #bar{padding:4px;gap:4px}
-  #bar button{min-height:34px;padding:0 8px}
+  #bar{position:fixed;top:4px;right:4px;z-index:20;flex-direction:column;align-items:stretch;width:88px;max-height:calc(100dvh - 8px);padding:4px;gap:3px;overflow-y:auto;overflow-x:hidden;border-radius:10px}
+  #bar button{min-height:32px;padding:0 4px;font-size:11.5px}
+  #bar .sep{height:1px;width:auto;align-self:stretch;margin:2px 0}
+  #bMenu{order:-1;font-size:0!important}
+  #bMenu::before{content:'☰';font-size:22px;font-weight:800;line-height:1}
   #topActions{padding:2px 6px}
   #opts{max-height:32dvh;overflow-y:auto;padding:4px 8px;gap:4px 8px}
   #opts button{min-height:34px}
@@ -91,6 +96,7 @@ body.dark #modal{background:rgba(0,0,0,.62)}
 </head>
 <body>
 <div id="bar">
+  <button id="bMenu" title="Menu: new, save, load, examples, theme">☰ Menu</button>
   <button data-tool="select" title="Select / edit (V)">↖ Select</button>
   <button data-tool="node" title="Add nodes (N)">● Node</button>
   <button data-tool="member" title="Add members (M)">／ Member</button>
@@ -103,7 +109,6 @@ body.dark #modal{background:rgba(0,0,0,.62)}
   <button id="bZin" title="Zoom in">＋</button>
   <button id="bZout" title="Zoom out">－</button>
   <button id="bInfo" title="Info / results panel">ⓘ</button>
-  <button id="bMenu" title="Menu: new, save, load, examples, theme">☰ Menu</button>
 </div>
 <div id="topActions">
   <button id="bUndo" title="Undo (Ctrl+Z)">↶</button>
