@@ -1117,12 +1117,13 @@
     if (window.innerWidth > 900 || !window.history || !window.history.pushState) return;
     history.pushState({ frame2dBackGuard: true }, '', location.href);
     const onBack = () => {
+      if (!$('modal').hidden) { closeMenu(); history.pushState({ frame2dBackGuard: true }, '', location.href); return; }
+      if (panelOpen) { panelOpen = false; refreshPanel(); history.pushState({ frame2dBackGuard: true }, '', location.href); return; }
+      if (tool !== 'select') { setTool('select'); history.pushState({ frame2dBackGuard: true }, '', location.href); return; }
       if (confirm('Exit the app?')) {
         window.removeEventListener('popstate', onBack);
         setTimeout(() => history.back(), 0);
-      } else {
-        history.pushState({ frame2dBackGuard: true }, '', location.href);
-      }
+      } else history.pushState({ frame2dBackGuard: true }, '', location.href);
     };
     window.addEventListener('popstate', onBack);
   }
