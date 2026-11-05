@@ -3,137 +3,1463 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#1f3a5f">
+<meta name="theme-color" content="#0d131f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>Frame2D</title>
+<title>Struc2D - Structural Analysis</title>
 <style>
-*{box-sizing:border-box}
-html,body{height:100%;margin:0}
-body{display:flex;flex-direction:column;height:100vh;height:100dvh;font:14px/1.3 system-ui,"Segoe UI",Roboto,sans-serif;color:#1b2430;background:#f4f6fa;overflow:hidden;-webkit-user-select:none;user-select:none}
-input,select{-webkit-user-select:text;user-select:text}
-button{font:inherit;min-height:38px;padding:0 10px;border:1px solid #c5cdd9;border-radius:8px;background:#fff;color:#1b2430;white-space:nowrap;cursor:pointer}
-button:disabled{opacity:.4;cursor:default}
-button.active{background:#2563eb;color:#fff;border-color:#2563eb}
-button.primary{background:#16a34a;color:#fff;border-color:#16a34a;font-weight:600}
-button.danger{color:#b42318;border-color:#f1b5ae}
-#bar{display:flex;gap:6px;padding:6px;overflow-x:auto;background:#1f3a5f;flex:none;align-items:center}
-#bar button{min-height:38px;padding:0 10px;font-size:14px}
-#bar .sep{width:1px;align-self:stretch;background:#ffffff40;margin:0 2px;flex:none}
-#bMenu{order:99}
-#topActions{display:flex;justify-content:flex-start;gap:6px;padding:2px 6px;background:#fff;flex:none}
-#topActions button{min-height:32px;width:38px;padding:0}
-#opts{display:flex;flex-wrap:wrap;gap:6px 12px;padding:6px 8px;background:#e6ecf5;align-items:center;flex:none;min-height:46px}
-#opts:empty{display:none}
-.seg{display:flex}
-.seg button{border-radius:0;margin-left:-1px}
-.seg button:first-child{border-radius:8px 0 0 8px;margin-left:0}
-.seg button:last-child{border-radius:0 8px 8px 0}
-.fld{display:flex;align-items:center;gap:4px;white-space:nowrap}
-.num,select{height:34px;border:1px solid #b9c3d3;border-radius:6px;padding:0 6px;font:inherit;background:#fff;color:#1b2430}
-.num{width:76px}
-.member-props{display:grid;grid-template-columns:1fr;gap:6px}
-.member-props .fld{justify-content:space-between;width:100%}
-.member-props .num{width:180px}
-.muted{color:#5a6678;flex-basis:100%}
-small.muted{font-size:12px}
-#main{flex:1;display:flex;min-height:0;position:relative}
-#cvwrap{flex:1;position:relative;min-width:0;min-height:0;overflow:hidden}
-#cv{position:absolute;left:0;top:0;touch-action:none;display:block;cursor:crosshair}
-#panel{width:330px;overflow-y:auto;background:#fff;border-left:1px solid #cfd6e2;padding:8px;flex:none}
-#panel.hidden{display:none}
-@media (max-width:900px){
-  #bar{position:static;flex-direction:row;align-items:center;width:auto;max-height:none;padding:4px;gap:4px;overflow-x:auto;overflow-y:hidden;border-radius:0}
-  #bar button{min-height:32px;padding:0 4px;font-size:11.5px}
-  #bar .sep{height:auto;width:1px;align-self:stretch;margin:0 2px}
-  #bMenu{order:99;font-size:11.5px!important}
-  #bMenu::before{display:none}
-  #topActions{padding:2px 6px}
-  #opts{max-height:32dvh;overflow-y:auto;padding:4px 8px;gap:4px 8px}
-  #opts button{min-height:34px}
-  .member-props .num{width:180px}
-  #resbar{max-height:18dvh;overflow-y:auto;padding:4px 8px;gap:4px 8px}
-  #status{font-size:12px}
-  #status{justify-content:flex-end;min-height:28px}
-  #status #msg{display:none}
-  #panel{position:absolute;left:0;right:0;bottom:0;width:auto;max-height:46%;border-left:0;border-top:2px solid #2563eb;box-shadow:0 -4px 12px rgba(0,0,0,.18)}
+/* CSS Reset & Variables */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --font-sans:Roboto,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:ui-monospace,"SF Mono","Roboto Mono",Menlo,monospace;
+  --radius-sm:8px;
+  --radius-md:12px;
+  --radius-lg:18px;
+  --radius-full:9999px;
+  --safe-top:env(safe-area-inset-top,0px);
+  --safe-bottom:env(safe-area-inset-bottom,0px);
+  --safe-left:env(safe-area-inset-left,0px);
+  --safe-right:env(safe-area-inset-right,0px);
+
+  /* Light CAD Theme */
+  --bg-app:#f8fafc;
+  --bg-canvas:#f8fafc;
+  --surface:#ffffff;
+  --surface-secondary:#f1f5f9;
+  --surface-hover:#e2e8f0;
+  --surface-active:#cbd5e1;
+  --border-subtle:rgba(203,213,225,0.7);
+  --border-strong:#94a3b8;
+  --text-main:#0f172a;
+  --text-muted:#64748b;
+  --primary:#2563eb;
+  --primary-hover:#1d4ed8;
+  --primary-light:rgba(37,99,235,0.12);
+  --primary-glow:rgba(37,99,235,0.25);
+  --success:#10b981;
+  --success-hover:#059669;
+  --danger:#ef4444;
+  --danger-light:rgba(239,68,68,0.12);
+  --shadow-sm:0 1px 3px rgba(0,0,0,0.06);
+  --shadow-md:0 4px 14px rgba(15,23,42,0.1);
+  --shadow-lg:0 12px 28px rgba(15,23,42,0.15);
 }
-.mobile-toggle{font-weight:600}
-.phead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-.sec{margin:8px 0;padding-bottom:8px;border-bottom:1px solid #eef1f6}
-.row{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin:4px 0}
-.loadrow{background:#f6f8fc;border:1px solid #e1e7f0;border-radius:8px;padding:6px;margin:6px 0}
-table.res{border-collapse:collapse;font-size:13px}
-table.res td,table.res th{padding:1px 8px;text-align:right;font-weight:normal}
-table.res th{color:#5a6678}
-table.res td:first-child,table.res th:first-child{text-align:left}
-.bad{color:#b42318;font-weight:600}.good{color:#157f3b}
-#resbar{display:flex;flex-wrap:wrap;gap:6px 10px;padding:5px 8px;background:#fff;border-top:1px solid #cfd6e2;align-items:center;flex:none}
-#resbar button{min-height:34px}
-#status{display:flex;justify-content:space-between;gap:10px;padding:4px 8px;background:#fff;border-top:1px solid #cfd6e2;font-size:13px;flex:none}
-#msg{flex:1}#msg.err{color:#b42318;font-weight:600}
-#coord{color:#5a6678;white-space:nowrap}
-#modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:10}
-#modal[hidden]{display:none}
-.card{background:#fff;border-radius:12px;padding:14px;max-width:440px;width:92%;max-height:88%;overflow:auto}
-.card h3{margin:0 0 8px}
-.project-row{display:flex;align-items:center;gap:6px;margin:7px 0;padding:7px;background:#f6f8fc;border:1px solid #e1e7f0;border-radius:8px}
-.project-row>div{flex:1;min-width:0}.project-row b,.project-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-body.dark{color:#e5e7eb;background:#111827}
-body.dark #opts{background:#1f2937}
-body.dark #topActions{background:#111827}
-body.dark #panel,body.dark #resbar,body.dark #status{background:#172033;color:#e5e7eb;border-color:#374151}
-body.dark #cvwrap{background:#111827}
-body.dark button,body.dark .num,body.dark select{background:#253044;color:#e5e7eb;border-color:#52617a}
-body.dark button.active{background:#2563eb;color:#fff;border-color:#2563eb}
-body.dark .loadrow{background:#202b3e;border-color:#3b4a62}
-body.dark .card{background:#172033;color:#e5e7eb}
-body.dark .project-row{background:#202b3e;border-color:#3b4a62}
-body.dark .muted,body.dark table.res th{color:#aab6c8}
-body.dark #modal{background:rgba(0,0,0,.62)}
+
+body.dark{
+  /* Dark CAD Theme */
+  --bg-app:#090d16;
+  --bg-canvas:#0d131f;
+  --surface:#131b2a;
+  --surface-secondary:#1a2438;
+  --surface-hover:#24324a;
+  --surface-active:#2c3d5a;
+  --border-subtle:rgba(255,255,255,0.12);
+  --border-strong:rgba(255,255,255,0.22);
+  --text-main:#f8fafc;
+  --text-muted:#94a3b8;
+  --primary:#3b82f6;
+  --primary-hover:#60a5fa;
+  --primary-light:rgba(59,130,246,0.18);
+  --primary-glow:rgba(59,130,246,0.35);
+  --success:#10b981;
+  --success-hover:#34d399;
+  --danger:#f87171;
+  --danger-light:rgba(248,113,113,0.2);
+  --shadow-sm:0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md:0 6px 18px rgba(0,0,0,0.6);
+  --shadow-lg:0 16px 36px rgba(0,0,0,0.7);
+}
+
+html,body{
+  height:100%;
+  width:100%;
+  overflow:hidden;
+  font-family:var(--font-sans);
+  font-size:13.5px;
+  line-height:1.4;
+  color:var(--text-main);
+  background:var(--bg-app);
+  -webkit-user-select:none;
+  user-select:none;
+  -webkit-tap-highlight-color:transparent;
+  -webkit-touch-callout:none;
+}
+
+/* Material 3 App Container */
+#app{
+  display:flex;
+  flex-direction:column;
+  height:100vh;
+  height:100dvh;
+  width:100vw;
+  position:relative;
+  overflow:hidden;
+}
+
+/* Native Android Top App Bar + Flush Results Ribbon */
+#topBar{
+  display:flex;
+  flex-direction:column;
+  background:var(--surface);
+  border-bottom:1px solid var(--border-subtle);
+  flex:none;
+  z-index:40;
+  box-shadow:var(--shadow-sm);
+  padding-top:var(--safe-top);
+  padding-left:var(--safe-left);
+  padding-right:var(--safe-right);
+}
+
+.top-bar-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  height:48px;
+  padding:0 8px;
+  gap:8px;
+  width:100%;
+}
+
+.top-title-btn{
+  flex:1;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  justify-content:center;
+  padding:4px 8px;
+  background:transparent;
+  border:none;
+  border-radius:var(--radius-sm);
+  cursor:pointer;
+  text-align:left;
+  transition:background .15s;
+}
+.top-title-btn:hover{
+  background:var(--surface-hover);
+}
+#projNameText{
+  font-size:14.5px;
+  font-weight:700;
+  color:var(--text-main);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  max-width:100%;
+}
+.proj-subtitle{
+  font-size:11px;
+  font-weight:500;
+  color:var(--primary);
+  line-height:1.1;
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
+
+.top-actions-group{
+  display:flex;
+  align-items:center;
+  gap:2px;
+  flex-shrink:0; /* Never wrap below */
+}
+
+/* Standard M3 Icon Button */
+.icon-btn{
+  width:40px;
+  height:40px;
+  min-height:40px;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:var(--radius-full);
+  background:transparent;
+  border:none;
+  color:var(--text-main);
+  cursor:pointer;
+  transition:all .15s;
+  flex-shrink:0;
+}
+.icon-btn:hover:not(:disabled){
+  background:var(--surface-hover);
+}
+.icon-btn:active:not(:disabled){
+  background:var(--surface-active);
+  transform:scale(0.94);
+}
+.icon-btn:disabled{
+  opacity:0.3;
+  cursor:default;
+  pointer-events:none;
+}
+
+/* Native Android Flush Results Ribbon (Docked directly under Top Bar) */
+#resbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  height:40px;
+  padding:0 8px 0 10px;
+  gap:8px;
+  background:var(--surface-secondary);
+  border-top:1px solid var(--border-subtle);
+  width:100%;
+  position:relative;
+}
+
+.solve-btn{
+  height:32px;
+  min-height:32px;
+  padding:0 12px;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  border-radius:var(--radius-full);
+  background:var(--success);
+  color:#fff !important;
+  border:none;
+  font-weight:700;
+  font-size:12px;
+  letter-spacing:0.5px;
+  cursor:pointer;
+  box-shadow:0 2px 6px rgba(16,185,129,0.3);
+  transition:all .15s;
+  flex-shrink:0;
+}
+.solve-btn:hover{
+  background:var(--success-hover);
+}
+.solve-btn:active{
+  transform:scale(0.96);
+}
+
+.res-modes{
+  display:flex;
+  align-items:center;
+  gap:2px;
+  background:var(--surface);
+  padding:2px;
+  border-radius:var(--radius-full);
+  border:1px solid var(--border-subtle);
+  overflow-x:auto;
+  scrollbar-width:none;
+}
+.res-modes::-webkit-scrollbar{display:none}
+
+.mode-btn{
+  height:26px;
+  min-height:26px;
+  padding:0 9px;
+  border:none;
+  background:transparent;
+  border-radius:var(--radius-full);
+  font-size:11.5px;
+  font-weight:600;
+  color:var(--text-muted);
+  cursor:pointer;
+  transition:all .15s;
+  white-space:nowrap;
+}
+.mode-btn:hover:not(:disabled){
+  color:var(--text-main);
+  background:var(--surface-hover);
+}
+.mode-btn.active{
+  background:var(--primary);
+  color:#fff !important;
+  box-shadow:0 1px 5px var(--primary-glow);
+}
+.mode-btn:disabled{
+  opacity:0.35;
+  cursor:default;
+}
+
+#diagSettingsPopover{
+  position:absolute;
+  top:calc(100% + 4px);
+  right:10px;
+  background:var(--surface);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);
+  padding:10px 14px;
+  box-shadow:var(--shadow-lg);
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-width:190px;
+  z-index:50;
+}
+#diagSettingsPopover.popover-hidden{
+  display:none;
+}
+
+/* Main Workspace */
+#main{
+  flex:1;
+  position:relative;
+  min-height:0;
+  min-width:0;
+  overflow:hidden;
+}
+#cvwrap{
+  position:absolute;
+  inset:0;
+  overflow:hidden;
+  background:var(--bg-canvas);
+}
+#cv{
+  position:absolute;
+  left:0;
+  top:0;
+  touch-action:none;
+  display:block;
+  cursor:crosshair;
+}
+
+/* Floating Elements Base */
+.floating-panel{
+  position:absolute;
+  background:var(--surface);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-md);
+  z-index:30;
+  transition:all .2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Floating Tool Dock (Bottom Center) */
+#toolDock{
+  bottom:calc(12px + var(--safe-bottom));
+  left:50%;
+  transform:translateX(-50%);
+  display:flex;
+  align-items:center;
+  gap:3px;
+  padding:4px 6px;
+  border-radius:var(--radius-full);
+  box-shadow:var(--shadow-lg);
+  max-width:calc(100vw - 20px);
+  overflow-x:auto;
+  scrollbar-width:none;
+}
+#toolDock::-webkit-scrollbar{display:none}
+
+.dock-btn{
+  min-height:42px;
+  min-width:44px;
+  padding:3px 9px;
+  border-radius:var(--radius-full);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:2px;
+  border:1px solid transparent;
+  background:transparent;
+  color:var(--text-muted);
+  font-size:10.5px;
+  font-weight:600;
+  cursor:pointer;
+  transition:all .15s;
+  flex:none;
+}
+.dock-btn svg{
+  width:18px;
+  height:18px;
+}
+.dock-btn:hover{
+  background:var(--surface-hover);
+  color:var(--text-main);
+}
+.dock-btn.active{
+  background:var(--primary);
+  color:#fff !important;
+  box-shadow:0 2px 8px var(--primary-glow);
+}
+.dock-btn.danger-tool:hover{
+  color:var(--danger);
+  background:var(--danger-light);
+}
+.dock-btn.danger-tool.active{
+  background:var(--danger);
+  color:#fff !important;
+  box-shadow:0 2px 8px rgba(239,68,68,0.35);
+}
+
+/* Floating Canvas Controls (Top Right) */
+#canvasControls{
+  top:12px;
+  right:calc(12px + var(--safe-right));
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  padding:4px;
+  border-radius:var(--radius-md);
+}
+.canvas-btn{
+  width:36px;
+  height:36px;
+  min-height:36px;
+  padding:0;
+  border-radius:var(--radius-sm);
+  border:none;
+  background:transparent;
+  color:var(--text-muted);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+}
+.canvas-btn:hover{
+  background:var(--surface-hover);
+  color:var(--text-main);
+}
+.canvas-btn.active{
+  color:var(--primary);
+  background:var(--primary-light);
+}
+.ctrl-sep{
+  height:1px;
+  width:20px;
+  background:var(--border-subtle);
+  align-self:center;
+  margin:2px 0;
+}
+
+/* Floating Contextual Tool Options Card */
+#optsCard{
+  bottom:calc(66px + var(--safe-bottom));
+  left:50%;
+  transform:translateX(-50%);
+  width:min(480px,calc(100vw - 20px));
+  max-height:36dvh;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  box-shadow:var(--shadow-lg);
+  z-index:35;
+}
+#optsCard.opts-hidden{
+  display:none !important;
+}
+.opts-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:7px 12px;
+  background:var(--surface-secondary);
+  border-bottom:1px solid var(--border-subtle);
+  font-size:12px;
+  font-weight:700;
+  color:var(--text-muted);
+  text-transform:uppercase;
+  letter-spacing:0.5px;
+}
+.opts-header-actions{
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
+.icon-btn-micro{
+  width:24px;
+  height:24px;
+  min-height:24px;
+  padding:0;
+  font-size:11px;
+  border-radius:var(--radius-sm);
+  background:transparent;
+  border:none;
+  color:var(--text-muted);
+  cursor:pointer;
+}
+.icon-btn-micro:hover{
+  background:var(--surface-hover);
+  color:var(--text-main);
+}
+#opts{
+  padding:10px 12px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px 10px;
+  align-items:center;
+  overflow-y:auto;
+  max-height:calc(36dvh - 36px);
+}
+#opts:empty{
+  display:none;
+}
+#optsCard.opts-minimized #opts{
+  display:none;
+}
+#optsCard.opts-minimized{
+  width:auto;
+  border-radius:var(--radius-full);
+}
+#optsCard.opts-minimized .opts-header{
+  border-bottom:none;
+  border-radius:var(--radius-full);
+  padding:5px 12px;
+}
+
+/* Inputs & Form Elements */
+input,select{
+  font-family:inherit;
+  font-size:13px;
+  color:var(--text-main);
+  background:var(--surface);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-sm);
+  height:32px;
+  padding:0 8px;
+  outline:none;
+  transition:border-color .15s;
+}
+input:focus,select:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 2px var(--primary-light);
+}
+.num{
+  width:74px;
+  font-family:var(--font-mono);
+  font-size:12px;
+}
+.fld{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  white-space:nowrap;
+  font-size:12.5px;
+  color:var(--text-muted);
+}
+.seg{
+  display:inline-flex;
+  background:var(--surface-secondary);
+  padding:2px;
+  border-radius:var(--radius-md);
+  border:1px solid var(--border-subtle);
+}
+.seg button{
+  border:none;
+  border-radius:var(--radius-sm);
+  background:transparent;
+  padding:4px 10px;
+  min-height:28px;
+  font-size:12px;
+  font-weight:600;
+  color:var(--text-muted);
+  cursor:pointer;
+}
+.seg button.active{
+  background:var(--primary);
+  color:#fff !important;
+  box-shadow:0 1px 4px var(--primary-glow);
+}
+.muted{
+  color:var(--text-muted);
+  flex-basis:100%;
+  font-size:11.5px;
+  line-height:1.35;
+}
+button.primary, #opts button.primary{
+  background:var(--primary) !important;
+  color:#fff !important;
+  border:none !important;
+  border-radius:var(--radius-md) !important;
+  font-weight:600 !important;
+  font-size:13px !important;
+  padding:8px 18px !important;
+  min-height:34px !important;
+  cursor:pointer !important;
+  box-shadow:0 2px 8px var(--primary-glow) !important;
+  transition:filter .15s, transform .1s;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+button.primary:hover, #opts button.primary:hover{
+  filter:brightness(1.1);
+}
+button.primary:active, #opts button.primary:active{
+  transform:scale(0.98);
+}
+#opts button{
+  font-family:inherit;
+  font-size:12.5px;
+  font-weight:600;
+  border-radius:var(--radius-md);
+  border:1px solid var(--border-subtle);
+  background:var(--surface);
+  color:var(--text-main);
+  padding:6px 14px;
+  min-height:32px;
+  cursor:pointer;
+  transition:all .15s;
+}
+#opts button:hover{
+  background:var(--surface-hover);
+}
+
+/* Floating Status Toast & Coordinates */
+#toast{
+  position:absolute;
+  top:12px;
+  left:50%;
+  transform:translateX(-50%);
+  display:flex;
+  align-items:center;
+  gap:7px;
+  padding:7px 16px;
+  border-radius:var(--radius-full);
+  background:var(--surface);
+  border:1px solid var(--border-subtle);
+  box-shadow:var(--shadow-md);
+  font-size:12.5px;
+  font-weight:600;
+  z-index:45;
+  pointer-events:none;
+  opacity:1;
+  transition:all .25s ease;
+}
+#toast.toast-hidden{
+  opacity:0;
+  transform:translate(-50%,-10px);
+  pointer-events:none;
+}
+#msg.err{
+  color:var(--danger);
+  font-weight:700;
+}
+#coordBadge{
+  position:absolute;
+  bottom:calc(12px + var(--safe-bottom));
+  right:calc(12px + var(--safe-right));
+  display:flex;
+  align-items:center;
+  gap:5px;
+  padding:3px 9px;
+  border-radius:var(--radius-full);
+  background:var(--surface);
+  border:1px solid var(--border-subtle);
+  font-family:var(--font-mono);
+  font-size:11px;
+  color:var(--text-muted);
+  pointer-events:none;
+  z-index:25;
+}
+
+/* Zen Mode (100% Canvas Workspace) */
+body.zen-mode #topBar,
+body.zen-mode #toolDock,
+body.zen-mode #canvasControls,
+body.zen-mode #optsCard,
+body.zen-mode #panel{
+  display:none !important;
+}
+.zen-restore-btn{
+  position:absolute;
+  top:calc(12px + var(--safe-top));
+  right:calc(12px + var(--safe-right));
+  display:none;
+  align-items:center;
+  gap:6px;
+  padding:8px 14px;
+  border-radius:var(--radius-full);
+  background:var(--surface);
+  border:1px solid var(--border-strong);
+  box-shadow:var(--shadow-md);
+  font-size:12px;
+  font-weight:700;
+  color:var(--text-main);
+  z-index:60;
+  cursor:pointer;
+}
+body.zen-mode .zen-restore-btn{
+  display:inline-flex;
+}
+
+/* Properties Inspector (Bottom Sheet on Mobile, Right Panel on Desktop) */
+#panel{
+  position:absolute;
+  top:0;
+  right:0;
+  bottom:0;
+  width:320px;
+  overflow-y:auto;
+  background:var(--surface);
+  border-left:1px solid var(--border-subtle);
+  padding:14px;
+  z-index:38;
+  box-shadow:var(--shadow-lg);
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  transition:transform .25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#panel.hidden{
+  display:none;
+}
+.phead{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding-bottom:8px;
+  border-bottom:1px solid var(--border-subtle);
+  font-size:14px;
+}
+.phead b{
+  color:var(--text-main);
+  font-weight:700;
+}
+.sec{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  padding:8px 0;
+  border-bottom:1px solid var(--border-subtle);
+}
+.sec:last-child{
+  border-bottom:none;
+}
+.row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px 8px;
+  align-items:center;
+}
+.loadrow{
+  background:var(--surface-secondary);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);
+  padding:8px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+#panel button{
+  font-family:inherit;
+  font-size:12px;
+  font-weight:600;
+  padding:7px 12px;
+  border-radius:var(--radius-sm);
+  background:var(--surface-tertiary);
+  color:var(--text-main);
+  border:1px solid var(--border-subtle);
+  cursor:pointer;
+  transition:all .15s ease;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  line-height:1.2;
+}
+#panel button:hover{
+  background:var(--primary);
+  color:#fff;
+  border-color:var(--primary);
+}
+#panel button:active{
+  transform:scale(0.98);
+}
+#panel button.danger{
+  background:rgba(239,68,68,0.15) !important;
+  color:var(--danger) !important;
+  border:1px solid rgba(239,68,68,0.35) !important;
+}
+#panel button.danger:hover{
+  background:var(--danger) !important;
+  color:#ffffff !important;
+}
+#panel .phead button{
+  width:28px;
+  height:28px;
+  padding:0;
+  border-radius:var(--radius-full);
+  font-size:13px;
+  background:var(--surface-tertiary);
+  color:var(--text-muted);
+}
+#panel .phead button:hover{
+  background:var(--danger);
+  color:#fff;
+}
+#panel select{
+  font-family:inherit;
+  font-size:12px;
+  font-weight:600;
+  padding:6px 10px;
+  border-radius:var(--radius-sm);
+  background:var(--surface-tertiary);
+  color:var(--text-main);
+  border:1px solid var(--border-subtle);
+  cursor:pointer;
+}
+#panel select:focus,#panel input:focus{
+  outline:none;
+  border-color:var(--primary);
+}
+#panel input[type="number"],#panel input.num{
+  font-family:var(--font-mono);
+  font-size:12px;
+  padding:5px 8px;
+  border-radius:var(--radius-sm);
+  background:var(--surface-secondary);
+  color:var(--text-main);
+  border:1px solid var(--border-subtle);
+}
+#panel .fld{
+  font-size:12px;
+  color:var(--text-muted);
+  font-weight:600;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+#panel details{
+  background:var(--surface-secondary);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);
+  padding:8px 10px;
+}
+#panel details summary{
+  cursor:pointer;
+  font-size:12px;
+  font-weight:700;
+  color:var(--primary);
+  outline:none;
+}
+.member-props{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:6px;
+}
+.member-props .fld{
+  justify-content:space-between;
+  width:100%;
+}
+.member-props .num{
+  width:170px;
+}
+table.res{
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+  margin:4px 0;
+}
+table.res td,table.res th{
+  padding:3px 6px;
+  text-align:right;
+  border-bottom:1px solid var(--border-subtle);
+}
+table.res th{
+  color:var(--text-muted);
+  font-weight:600;
+}
+table.res td:first-child,table.res th:first-child{
+  text-align:left;
+}
+.good{color:var(--success);font-weight:700}
+.bad{color:var(--danger);font-weight:700}
+
+/* Native Android Navigation Drawer */
+#drawerScrim{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,0.55);
+  backdrop-filter:blur(4px);
+  z-index:90;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .25s ease;
+}
+#drawerScrim.open{
+  opacity:1;
+  pointer-events:auto;
+}
+
+#navDrawer{
+  position:fixed;
+  top:0;
+  bottom:0;
+  left:0;
+  width:min(320px,85vw);
+  background:var(--surface);
+  border-right:1px solid var(--border-subtle);
+  box-shadow:var(--shadow-lg);
+  z-index:95;
+  display:flex;
+  flex-direction:column;
+  transform:translateX(-100%);
+  transition:transform .28s cubic-bezier(0.16, 1, 0.3, 1);
+  padding-top:var(--safe-top);
+  padding-bottom:var(--safe-bottom);
+}
+#navDrawer.open{
+  transform:translateX(0);
+}
+
+.drawer-header{
+  padding:16px 18px;
+  border-bottom:1px solid var(--border-subtle);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  background:var(--surface-secondary);
+}
+.drawer-brand{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.drawer-brand svg{
+  width:28px;
+  height:28px;
+  flex-shrink:0;
+}
+.drawer-title{
+  font-size:16px;
+  font-weight:800;
+  color:var(--text-main);
+  line-height:1.2;
+}
+.drawer-sub{
+  font-size:11.5px;
+  font-weight:500;
+  color:var(--text-muted);
+}
+.drawer-content{
+  flex:1;
+  overflow-y:auto;
+  padding:12px 10px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.drawer-section-title{
+  font-size:11px;
+  font-weight:700;
+  color:var(--text-muted);
+  text-transform:uppercase;
+  letter-spacing:0.8px;
+  padding:6px 10px 2px;
+}
+.drawer-item{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:10px 12px;
+  border-radius:var(--radius-md);
+  color:var(--text-main);
+  background:transparent;
+  border:none;
+  width:100%;
+  font-size:13.5px;
+  font-weight:600;
+  cursor:pointer;
+  text-align:left;
+  transition:background .15s;
+}
+.drawer-item svg{
+  width:20px;
+  height:20px;
+  color:var(--primary);
+  flex-shrink:0;
+}
+.drawer-item:hover{
+  background:var(--surface-hover);
+}
+.drawer-item:active{
+  background:var(--surface-active);
+}
+.drawer-divider{
+  height:1px;
+  background:var(--border-subtle);
+  margin:4px 0;
+}
+.drawer-card-box{
+  background:var(--surface-secondary);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);
+  padding:10px 12px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+/* Material 3 Custom Dialogs (Replaces Page says: // popups) */
+#modal{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,0.6);
+  backdrop-filter:blur(6px);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:100;
+  padding:16px;
+}
+#modal[hidden]{
+  display:none;
+}
+.m3-dialog{
+  background:var(--surface);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-lg);
+  padding:20px 22px;
+  max-width:420px;
+  width:100%;
+  box-shadow:var(--shadow-lg);
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.m3-dialog-title{
+  font-size:18px;
+  font-weight:700;
+  color:var(--text-main);
+}
+.m3-dialog-message{
+  font-size:13.5px;
+  color:var(--text-muted);
+  line-height:1.4;
+}
+.m3-input{
+  width:100%;
+  height:40px;
+  padding:0 12px;
+  font-size:14px;
+  border-radius:var(--radius-sm);
+}
+.m3-dialog-actions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:8px;
+  margin-top:6px;
+}
+.m3-btn-text{
+  height:36px;
+  padding:0 12px;
+  border-radius:var(--radius-full);
+  background:transparent;
+  border:none;
+  color:var(--text-muted);
+  font-weight:600;
+  cursor:pointer;
+}
+.m3-btn-text:hover{
+  background:var(--surface-hover);
+  color:var(--text-main);
+}
+.m3-btn-filled{
+  height:36px;
+  padding:0 18px;
+  border-radius:var(--radius-full);
+  background:var(--primary);
+  color:#fff !important;
+  border:none;
+  font-weight:700;
+  cursor:pointer;
+  box-shadow:0 1px 4px var(--primary-glow);
+}
+.m3-btn-filled:hover{
+  background:var(--primary-hover);
+}
+.m3-btn-danger{
+  height:36px;
+  padding:0 18px;
+  border-radius:var(--radius-full);
+  background:var(--danger);
+  color:#fff !important;
+  border:none;
+  font-weight:700;
+  cursor:pointer;
+}
+.m3-form-grid{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.m3-form-field{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  font-size:12px;
+  color:var(--text-muted);
+  font-weight:600;
+}
+.project-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:10px 14px;
+  background:var(--surface-secondary);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);
+  margin-bottom:8px;
+}
+.project-row>div{
+  flex:1;
+  min-width:0;
+}
+.project-row b,.project-row small{
+  display:block;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.project-row b{
+  color:var(--text-main);
+  font-size:13px;
+  margin-bottom:2px;
+}
+.project-row small{
+  color:var(--text-muted);
+  font-size:11px;
+}
+.project-row-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-shrink:0;
+}
+.project-row button,
+.project-row .btn-open,
+.project-row .btn-delete{
+  font-family:inherit;
+  font-size:12px;
+  font-weight:600;
+  padding:6px 14px;
+  border-radius:var(--radius-sm);
+  cursor:pointer;
+  transition:all .15s ease;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  line-height:1.2;
+}
+.project-row .btn-open,
+.project-row button:not(.danger):not(.btn-delete){
+  background:rgba(59,130,246,0.15) !important;
+  color:var(--primary) !important;
+  border:1px solid rgba(59,130,246,0.35) !important;
+}
+.project-row .btn-open:hover,
+.project-row button:not(.danger):not(.btn-delete):hover{
+  background:var(--primary) !important;
+  color:#fff !important;
+}
+.project-row .btn-delete,
+.project-row button.danger{
+  background:rgba(239,68,68,0.15) !important;
+  color:var(--danger) !important;
+  border:1px solid rgba(239,68,68,0.35) !important;
+}
+.project-row .btn-delete:hover,
+.project-row button.danger:hover{
+  background:var(--danger) !important;
+  color:#fff !important;
+}
+
+/* Mobile Layout Adjustments */
+@media (max-width:900px){
+  #toolDock{
+    bottom:calc(8px + var(--safe-bottom));
+    padding:3px 5px;
+    gap:2px;
+  }
+  .dock-btn{
+    min-height:38px;
+    min-width:40px;
+    padding:2px 5px;
+    font-size:10px;
+  }
+  .dock-btn svg{
+    width:16px;
+    height:16px;
+  }
+  #optsCard{
+    bottom:calc(54px + var(--safe-bottom));
+    width:calc(100vw - 16px);
+    max-height:34dvh;
+  }
+  #panel{
+    top:auto;
+    bottom:0;
+    left:0;
+    right:0;
+    width:100%;
+    max-height:44dvh;
+    border-left:none;
+    border-top:2px solid var(--primary);
+    border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+    padding:10px 12px calc(10px + var(--safe-bottom));
+  }
+}
 </style>
 </head>
 <body>
-<div id="bar">
-  <button id="bMenu" title="Menu: new, save, load, examples, theme">☰ Menu</button>
-  <button data-tool="select" title="Select / edit (V)">↖ Select</button>
-  <button data-tool="node" title="Add nodes (N)">● Node</button>
-  <button data-tool="member" title="Add members (M)">／ Member</button>
-  <button data-tool="support" title="Supports (S)">△ Support</button>
-  <button data-tool="load" title="Loads (L)">↓ Load</button>
-  <button data-tool="influence" title="Influence lines (I)">∿ Influence Lines</button>
-  <button data-tool="delete" title="Delete (D)">✕ Delete</button>
-  <span class="sep"></span>
-  <button id="bFit" title="Zoom to fit (F)">Fit</button>
-  <button id="bZin" title="Zoom in">＋</button>
-  <button id="bZout" title="Zoom out">－</button>
-  <button id="bInfo" title="Info / results panel">ⓘ</button>
+<div id="app">
+  <!-- Native Android 2-Tier Header (Top Bar + Flush Results Ribbon) -->
+  <header id="topBar">
+    <div class="top-bar-row">
+      <!-- Android Navigation Drawer Trigger -->
+      <button id="bMenu" class="icon-btn" title="Navigation & Settings Menu">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+
+      <!-- Project Title Button (Tap to Rename) -->
+      <button id="bProjName" class="top-title-btn" title="Tap to rename structure or view projects">
+        <span id="projNameText">Untitled structure</span>
+        <span class="proj-subtitle">
+          <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/></svg>
+          Struc2D Structural CAD
+        </span>
+      </button>
+
+      <!-- Top Action Controls (Strictly single horizontal row, never wrapped) -->
+      <div class="top-actions-group">
+        <button id="bUndo" class="icon-btn" title="Undo (Ctrl+Z)" disabled>
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 6L3 10L7 14M3 10H13C15.2 10 17 11.8 17 14V15"/></svg>
+        </button>
+        <button id="bRedo" class="icon-btn" title="Redo (Ctrl+Y)" disabled>
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 6L17 10L13 14M17 10H7C4.8 10 3 11.8 3 14V15"/></svg>
+        </button>
+        <button id="bThemeQuick" class="icon-btn" title="Toggle Light/Dark Theme">
+          <svg id="themeIconSun" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="4"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.3 4.3l1.4 1.4M14.3 14.3l1.4 1.4M4.3 15.7l1.4-1.4M14.3 5.7l1.4-1.4"/></svg>
+        </button>
+        <button id="bZen" class="icon-btn" title="Zen Fullscreen Drawing Mode">
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V3H7M17 7V3H13M3 13V17H7M17 13V17H13"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Flush Results Ribbon (Docked directly under top app bar) -->
+    <div id="resbar">
+      <button id="bSolve" class="solve-btn" title="Solve Structural Model (Ctrl+Enter)">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><polygon points="3,2 14,8 3,14"/></svg>
+        <span>SOLVE</span>
+      </button>
+
+      <div class="res-modes">
+        <button data-mode="model" class="mode-btn active" title="Model View">Model</button>
+        <button data-mode="defl" class="mode-btn" title="Deflected Shape" disabled>Defl</button>
+        <button data-mode="N" class="mode-btn" title="Axial Force Diagram (N)" disabled>N</button>
+        <button data-mode="V" class="mode-btn" title="Shear Force Diagram (V)" disabled>V</button>
+        <button data-mode="M" class="mode-btn" title="Bending Moment Diagram (M)" disabled>M</button>
+      </div>
+
+      <button id="bDiagSettingsToggle" class="canvas-btn" style="width:30px;height:30px;min-height:30px" title="Diagram Scale & Flip Settings">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="2" y1="4" x2="14" y2="4"/><circle cx="5" cy="4" r="2" fill="currentColor"/><line x1="2" y1="12" x2="14" y2="12"/><circle cx="11" cy="12" r="2" fill="currentColor"/></svg>
+      </button>
+
+      <div id="diagSettingsPopover" class="popover-hidden">
+        <label class="fld"><span>Scale</span><input id="dscale" type="range" min="0.2" max="4" step="0.1" value="1" disabled></label>
+        <label class="fld"><input id="flip" type="checkbox" disabled><span>Flip side</span></label>
+        <label class="fld"><input id="quickReact" type="checkbox" checked><span>Reactions</span></label>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Canvas Workspace -->
+  <main id="main">
+    <div id="cvwrap"><canvas id="cv"></canvas></div>
+
+    <!-- Floating Status Toast -->
+    <div id="toast" class="toast-hidden">
+      <span id="msg"></span>
+    </div>
+
+    <!-- Floating Coordinates Badge -->
+    <div id="coordBadge">
+      <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="6"/><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
+      <span id="coord"></span>
+    </div>
+
+    <!-- Floating Canvas Controls -->
+    <div id="canvasControls" class="floating-panel">
+      <button id="bFit" class="canvas-btn" title="Zoom to fit (F)">
+        <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="2" fill="currentColor"/><path d="M10 1v3M10 16v3M1 10h3M16 10h3"/></svg>
+      </button>
+      <button id="bZin" class="canvas-btn" title="Zoom in (+)">
+        <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><line x1="10" y1="4" x2="10" y2="16"/><line x1="4" y1="10" x2="16" y2="10"/></svg>
+      </button>
+      <button id="bZout" class="canvas-btn" title="Zoom out (-)">
+        <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="10" x2="16" y2="10"/></svg>
+      </button>
+      <div class="ctrl-sep"></div>
+      <button id="bSnapToggle" class="canvas-btn active" title="Toggle Grid Snapping">
+        <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h2v2H4zM14 4h2v2H14zM4 14h2v2H4zM14 14h2v2H14zM9 9h2v2H9z"/></svg>
+      </button>
+      <button id="bInfo" class="canvas-btn" title="Toggle Properties / Results Panel">
+        <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="8"/><line x1="10" y1="9" x2="10" y2="14"/><circle cx="10" cy="6" r="1" fill="currentColor"/></svg>
+      </button>
+    </div>
+
+    <!-- Floating Contextual Tool Options Card -->
+    <div id="optsCard" class="floating-panel opts-hidden">
+      <div class="opts-header">
+        <span id="optsTitle">Tool Options</span>
+        <div class="opts-header-actions">
+          <button id="bOptsMin" class="icon-btn-micro" title="Minimize / Expand options">▲</button>
+          <button id="bOptsClose" class="icon-btn-micro" title="Close options">✕</button>
+        </div>
+      </div>
+      <div id="opts"></div>
+    </div>
+
+    <!-- Floating Tool Dock -->
+    <nav id="toolDock" class="floating-panel">
+      <button data-tool="select" class="dock-btn active" title="Select / Move / Edit (V)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 4l7.5 17 2.5-7.5 7.5-2.5L4 4z"/></svg>
+        <span>Select</span>
+      </button>
+      <button data-tool="node" class="dock-btn" title="Add Nodes (N)">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-dasharray="2 2"/></svg>
+        <span>Node</span>
+      </button>
+      <button data-tool="member" class="dock-btn" title="Add Members (M)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="4" y1="20" x2="20" y2="4"/><circle cx="4" cy="20" r="3" fill="currentColor"/><circle cx="20" cy="4" r="3" fill="currentColor"/></svg>
+        <span>Member</span>
+      </button>
+      <button data-tool="support" class="dock-btn" title="Supports (S)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12,5 4,18 20,18" fill="currentColor" fill-opacity="0.25"/><line x1="2" y1="20.5" x2="22" y2="20.5" stroke-width="2.5"/></svg>
+        <span>Support</span>
+      </button>
+      <button data-tool="load" class="dock-btn" title="Loads (L)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="3" x2="12" y2="17"/><polygon points="8,13 12,21 16,13" fill="currentColor"/></svg>
+        <span>Load</span>
+      </button>
+      <button data-tool="influence" class="dock-btn" title="Influence Lines (I)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 16 Q 8 4, 12 11 T 21 16"/><line x1="2" y1="18.5" x2="22" y2="18.5" stroke-width="1.8"/></svg>
+        <span>Influence</span>
+      </button>
+      <button data-tool="delete" class="dock-btn danger-tool" title="Delete Elements (D)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></svg>
+        <span>Delete</span>
+      </button>
+    </nav>
+
+    <!-- Zen Mode Restore Button -->
+    <button id="bZenRestore" class="zen-restore-btn" title="Restore all controls">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 5V2h3M14 5V2h-3M2 11v3h3M14 11v3h-3"/></svg>
+      <span>Restore Controls</span>
+    </button>
+
+    <!-- Properties Inspector Panel -->
+    <aside id="panel" class="hidden"></aside>
+  </main>
+
+  <!-- Native Android Navigation Drawer & Scrim -->
+  <div id="drawerScrim"></div>
+  <aside id="navDrawer">
+    <div class="drawer-header">
+      <div class="drawer-brand">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2.2">
+          <polygon points="3,19 12,4 21,19" fill="var(--primary)" fill-opacity="0.15"/>
+          <line x1="7.5" y1="11.5" x2="16.5" y2="11.5" stroke="currentColor" stroke-dasharray="2 1"/>
+          <line x1="12" y1="4" x2="12" y2="19" stroke="currentColor"/>
+          <circle cx="3" cy="19" r="2.2" fill="var(--primary)"/>
+          <circle cx="21" cy="19" r="2.2" fill="var(--primary)"/>
+          <circle cx="12" cy="4" r="2.2" fill="var(--primary)"/>
+        </svg>
+        <div>
+          <div class="drawer-title">Struc2D</div>
+          <div class="drawer-sub">Structural Engineering CAD</div>
+        </div>
+      </div>
+      <button id="bDrawerClose" class="icon-btn" title="Close Drawer">
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 5L15 15M15 5L5 15"/></svg>
+      </button>
+    </div>
+
+    <div class="drawer-content">
+      <!-- Projects Section -->
+      <div class="drawer-section-title">Projects & Files</div>
+      <button id="dActNew" class="drawer-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        <span>New Structure</span>
+      </button>
+      <button id="dActSave" class="drawer-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        <span>Save Structure</span>
+      </button>
+      <button id="dActProjects" class="drawer-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span>Saved Projects Library</span>
+      </button>
+      <button id="dActSections" class="drawer-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 16h10M12 8v8"/></svg>
+        <span>Cross-Section Profiles (E, A, I)</span>
+      </button>
+      <button id="dActImport" class="drawer-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span>Import backup</span>
+      </button>
+      <button id="dActExport" class="drawer-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>Export backup</span>
+      </button>
+      <input type="file" id="f2dFileInput" accept=".s2d,.f2d,.json,application/octet-stream,application/json,text/plain,*/*" style="display:none">
+
+      <div class="drawer-divider"></div>
+
+      <!-- Settings & Units -->
+      <div class="drawer-section-title">CAD Units & Display Settings</div>
+      <div class="drawer-card-box">
+        <div style="display:flex;gap:8px;">
+          <label class="fld" style="flex:1">Force
+            <select id="dFu" class="num" style="width:100%;height:38px;padding:4px 8px;border-radius:var(--radius-sm);background:var(--surface-tertiary);color:var(--text-main);border:1px solid var(--border-subtle);font-weight:600;cursor:pointer;">
+              <option value="kg">kg</option>
+              <option value="t">t</option>
+              <option value="N">N</option>
+              <option value="kN">kN</option>
+              <option value="lb">lb</option>
+            </select>
+          </label>
+          <label class="fld" style="flex:1">Length
+            <select id="dLu" class="num" style="width:100%;height:38px;padding:4px 8px;border-radius:var(--radius-sm);background:var(--surface-tertiary);color:var(--text-main);border:1px solid var(--border-subtle);font-weight:600;cursor:pointer;">
+              <option value="m">m</option>
+              <option value="cm">cm</option>
+              <option value="mm">mm</option>
+              <option value="ft">ft</option>
+              <option value="inch">inch</option>
+            </select>
+          </label>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <label class="fld" style="flex:1">Grid <input id="dGrid" type="number" step="any" class="num" style="width:100%" value="1"></label>
+          <label class="fld" style="flex:1"><input id="dSnap" type="checkbox" checked> Snap to Grid</label>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <label class="fld" style="flex:1"><input id="dLabels" type="checkbox" checked> Labels (N1, M1)</label>
+          <label class="fld" style="flex:1"><input id="dReact" type="checkbox" checked> Reactions</label>
+        </div>
+      </div>
+
+      <div class="drawer-section-title">Defaults for New Members</div>
+      <div class="drawer-card-box">
+        <div style="display:flex;gap:6px;">
+          <label class="fld" style="flex:1">E <input id="dDefE" type="number" step="any" class="num" style="width:100%"></label>
+          <label class="fld" style="flex:1">A <input id="dDefA" type="number" step="any" class="num" style="width:100%"></label>
+          <label class="fld" style="flex:1">I <input id="dDefI" type="number" step="any" class="num" style="width:100%"></label>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Material 3 Custom Dialog Container (No Page says:) -->
+  <div id="modal" hidden></div>
 </div>
-<div id="topActions">
-  <button id="bUndo" title="Undo (Ctrl+Z)">↶</button>
-  <button id="bRedo" title="Redo (Ctrl+Y)">↷</button>
-</div>
-<div id="opts"></div>
-<div id="main">
-  <div id="cvwrap"><canvas id="cv"></canvas></div>
-  <aside id="panel" class="hidden"></aside>
-</div>
-<div id="resbar">
-  <button data-mode="model">Model</button>
-  <button data-mode="defl">Deflected</button>
-  <button data-mode="N">N</button>
-  <button data-mode="V">V</button>
-  <button data-mode="M">M</button>
-  <button id="bSolve" class="primary" title="Solve (Ctrl+Enter)">▶ Solve</button>
-  <label class="fld">Size <input id="dscale" type="range" min="0.2" max="4" step="0.1" value="1"></label>
-  <label class="fld"><input id="flip" type="checkbox"> Flip side</label>
-</div>
-<div id="status"><span id="msg"></span><span id="coord"></span></div>
-<div id="modal" hidden></div>
+
 <script src="solver2d.js"></script>
 <script src="core.js"></script>
 <script src="influence.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
+

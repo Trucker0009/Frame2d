@@ -62,11 +62,23 @@
     return o;
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify({ doc, S, view, sections: sectionLibrary, assignments: sectionAssignments })); } catch (e) { /* ignore */ } }
-  function saveName() { try { localStorage.setItem(NAME_KEY, structureName); } catch (e) { /* ignore */ } }
+  function updateProjName() {
+    const elName = $('projNameText');
+    if (elName) elName.textContent = structureName || 'Untitled structure';
+  }
+  function saveName() { try { localStorage.setItem(NAME_KEY, structureName); } catch (e) { /* ignore */ } updateProjName(); }
   function applyTheme() {
     document.body.classList.toggle('dark', theme === 'dark');
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#111827' : '#1f3a5f');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0d131f' : '#f1f5f9');
+    const iconSun = $('themeIconSun');
+    if (iconSun) {
+      if (theme === 'dark') {
+        iconSun.innerHTML = '<path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" fill="currentColor"/>';
+      } else {
+        iconSun.innerHTML = '<circle cx="10" cy="10" r="4"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.3 4.3l1.4 1.4M14.3 14.3l1.4 1.4M4.3 15.7l1.4-1.4M14.3 5.7l1.4-1.4"/>';
+      }
+    }
   }
   function setTheme(v) {
     theme = v === 'dark' ? 'dark' : 'light';
@@ -74,6 +86,32 @@
     applyTheme();
     if (!$('modal').hidden) openMenu(); else refreshOptions();
     draw();
+  }
+  function toggleTheme() { setTheme(theme === 'dark' ? 'light' : 'dark'); }
+  let zenMode = false;
+  function toggleZen(enable) {
+    zenMode = typeof enable === 'boolean' ? enable : !zenMode;
+    document.body.classList.toggle('zen-mode', zenMode);
+    resize();
+  }
+  let optsMinimized = false;
+  function toggleOptsMin() {
+    optsMinimized = !optsMinimized;
+    const card = $('optsCard');
+    if (card) card.classList.toggle('opts-minimized', optsMinimized);
+    const b = $('bOptsMin');
+    if (b) b.textContent = optsMinimized ? '▼' : '▲';
+  }
+  function toggleDiagSettings() {
+    const p = $('diagSettingsPopover');
+    if (p) p.classList.toggle('popover-hidden');
+  }
+  function toggleSnap() {
+    S.snap = !S.snap;
+    save();
+    refreshButtons();
+    draw();
+    msg(S.snap ? 'Grid snapping ON' : 'Grid snapping OFF');
   }
   function restore() {
     try {
@@ -86,13 +124,30 @@
         if (o.view && isFinite(o.view.s)) { view = o.view; viewInit = true; }
       }
     } catch (e) { /* ignore */ }
-    try { theme = localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'; } catch (e) { theme = 'light'; }
+    try { theme = localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : (localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'); } catch (e) { theme = 'dark'; }
     try { structureName = localStorage.getItem(NAME_KEY) || 'Untitled structure'; } catch (e) { structureName = 'Untitled structure'; }
     applyTheme();
+    updateProjName();
   }
 
   /* ---------------- messages ---------------- */
-  function msg(t, err) { const m = $('msg'); m.textContent = t || ''; m.className = err ? 'err' : ''; }
+  let toastTimer = null;
+  function msg(t, err) {
+    const m = $('msg'), toast = $('toast');
+    m.textContent = t || '';
+    m.className = err ? 'err' : '';
+    if (toast) {
+      if (!t) {
+        toast.classList.add('toast-hidden');
+      } else {
+        toast.classList.remove('toast-hidden');
+        clearTimeout(toastTimer);
+        if (!err) {
+          toastTimer = setTimeout(() => { toast.classList.add('toast-hidden'); }, 3000);
+        }
+      }
+    }
+  }
 
   /* ---------------- editing / undo ---------------- */
   const snapDoc = () => JSON.stringify(doc);
@@ -117,6 +172,7 @@
   /* ---------------- canvas / view ---------------- */
   const cv = $('cv'), cx = cv.getContext('2d');
   let W = 0, H = 0, dpr = 1, raf = 0;
+  let textBoxes = [];
   const toScr = (x, y) => [view.ox + x * view.s, view.oy - y * view.s];
   const toWld = (sx, sy) => [(sx - view.ox) / view.s, (view.oy - sy) / view.s];
   const nodeScr = i => toScr(doc.nodes[i].x, doc.nodes[i].y);
@@ -185,10 +241,20 @@
   /* ---------------- drawing helpers ---------------- */
   function draw() { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; render(); }); }
   function line(a, b) { cx.beginPath(); cx.moveTo(a[0], a[1]); cx.lineTo(b[0], b[1]); cx.stroke(); }
+  function textBox(t, x, y, align, font) {
+    const old = cx.font; cx.font = font;
+    const w = cx.measureText(t).width + 8, h = parseInt(font, 10) + 8;
+    cx.font = old;
+    const left = align === 'left' ? x : align === 'right' ? x - w : x - w / 2;
+    return { left, top: y - h / 2, right: left + w, bottom: y + h / 2 };
+  }
+  function textOverlaps(b) { return textBoxes.some(a => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top); }
+  function rememberText(t, x, y, align, font) { textBoxes.push(textBox(t, x, y, align, font)); }
   function label(t, x, y, col, align) {
     cx.font = '12px system-ui, sans-serif'; cx.textAlign = align || 'center'; cx.textBaseline = 'middle';
     cx.lineWidth = 3; cx.strokeStyle = theme === 'dark' ? 'rgba(17,24,39,.95)' : 'rgba(255,255,255,.9)'; cx.strokeText(t, x, y);
     cx.fillStyle = col || '#333'; cx.fillText(t, x, y);
+    rememberText(t, x, y, align || 'center', cx.font);
   }
   function head(tx, ty, dx, dy, s = 9, w = 4.5) {
     cx.beginPath(); cx.moveTo(tx, ty); cx.lineTo(tx - dx * s - dy * w, ty - dy * s + dx * w); cx.lineTo(tx - dx * s + dy * w, ty - dy * s - dx * w); cx.closePath(); cx.fill();
@@ -209,8 +275,51 @@
   }
 
   /* ---------------- rendering ---------------- */
+  function drawReactionText(text, x, y, align = 'center') {
+    cx.save();
+    const isDark = theme === 'dark';
+    cx.font = '600 10.5px system-ui, -apple-system, sans-serif';
+    cx.textAlign = align;
+    cx.textBaseline = 'middle';
+    cx.lineWidth = 2.8;
+    cx.strokeStyle = isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)';
+    cx.lineJoin = 'round';
+    cx.strokeText(text, x, y);
+    cx.fillStyle = isDark ? '#34d399' : '#047857';
+    cx.fillText(text, x, y);
+    cx.restore();
+  }
+
+  function drawDiagramText(text, x, y, col, align = 'center') {
+    cx.save();
+    const isDark = theme === 'dark';
+    cx.font = '600 10.5px system-ui, -apple-system, sans-serif';
+    cx.textAlign = align;
+    cx.textBaseline = 'middle';
+    cx.lineWidth = 2.8;
+    cx.strokeStyle = isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)';
+    cx.lineJoin = 'round';
+    cx.strokeText(text, x, y);
+    cx.fillStyle = col;
+    cx.fillText(text, x, y);
+    cx.restore();
+  }
+
+  function drawHead(tipX, tipY, dirX, dirY, len = 7.5, halfW = 3.2) {
+    const m = Math.hypot(dirX, dirY) || 1;
+    const ux = dirX / m, uy = dirY / m;
+    const perpX = -uy, perpY = ux;
+    cx.beginPath();
+    cx.moveTo(tipX, tipY);
+    cx.lineTo(tipX - ux * len + perpX * halfW, tipY - uy * len + perpY * halfW);
+    cx.lineTo(tipX - ux * len - perpX * halfW, tipY - uy * len - perpY * halfW);
+    cx.closePath();
+    cx.fill();
+  }
+
   function render() {
     if (!W || !H) return;
+    textBoxes = [];
     cx.setTransform(dpr, 0, 0, dpr, 0, 0);
     cx.clearRect(0, 0, W, H); cx.fillStyle = theme === 'dark' ? '#111827' : '#fff'; cx.fillRect(0, 0, W, H);
     drawGrid();
@@ -399,27 +508,43 @@
     });
   }
 
+  function fmtReact(v) {
+    if (v === undefined || v === null || isNaN(v)) return '0';
+    const abs = Math.abs(v);
+    if (abs < 1e-7) return '0';
+    const rounded = Math.round(v * 100) / 100;
+    let s = rounded.toFixed(2);
+    if (s.endsWith('.00')) s = s.slice(0, -3);
+    else if (s.endsWith('0')) s = s.slice(0, -1);
+    return s;
+  }
+
   function drawReactions() {
     const R = results.res.reactions; let rmax = 0;
     for (const r of Object.values(R)) rmax = Math.max(rmax, Math.abs(r.fx), Math.abs(r.fy), Math.abs(r.rn || 0), Math.abs(r.mz));
     if (rmax <= 0) return;
     const col = theme === 'dark' ? '#4ade80' : '#0b6b3a';
+    const zoomScale = clamp(view.s / 50, 0.45, 1.7), len = v => clamp(46 * zoomScale * (0.45 + Math.abs(v) / rmax * 0.55), 22, 72);
     for (const [k, r] of Object.entries(R)) {
       if (!doc.nodes[+k]) continue;
-      const [px, py] = nodeScr(+k), len = v => 58 * (0.45 + Math.abs(v) / rmax * 0.55);
-      const reactionLabel = (t, x, y, align = 'center') => {
-        cx.font = 'bold 14px system-ui, sans-serif'; cx.textAlign = align; cx.textBaseline = 'middle';
-        cx.lineWidth = 4; cx.strokeStyle = theme === 'dark' ? 'rgba(17,24,39,.98)' : 'rgba(255,255,255,.98)'; cx.strokeText(t, x, y);
-        cx.fillStyle = col; cx.fillText(t, x, y);
+      const [px, py] = nodeScr(+k);
+      const reactionLabel = (t, x, y, align = 'center', alternatives = []) => {
+        const font = 'bold 14px system-ui, sans-serif';
+        const positions = [[x, y, align], ...alternatives];
+        let chosen = positions.find(p => !textOverlaps(textBox(t, p[0], p[1], p[2], font))) || positions[0];
+        cx.font = font; cx.textAlign = chosen[2]; cx.textBaseline = 'middle';
+        cx.lineWidth = 4; cx.strokeStyle = theme === 'dark' ? 'rgba(17,24,39,.98)' : 'rgba(255,255,255,.98)'; cx.strokeText(t, chosen[0], chosen[1]);
+        cx.fillStyle = col; cx.fillText(t, chosen[0], chosen[1]);
+        rememberText(t, chosen[0], chosen[1], chosen[2], font);
       };
       const reactionArrow = (x, y, d, L, side) => {
         let tx = x + d[0] * (L + 14), ty = y + d[1] * (L + 14);
         if (side === 'right') tx = x + (d[0] > 0 ? L + 14 : 14);
         if (side === 'below') ty = y + (d[1] > 0 ? L + 14 : 14);
         const tail = [tx - d[0] * L, ty - d[1] * L];
-        cx.strokeStyle = col; cx.fillStyle = col; cx.lineWidth = 3.5; cx.lineCap = 'round';
+        cx.strokeStyle = col; cx.fillStyle = col; cx.lineWidth = clamp(3.5 * zoomScale, 2, 4.5); cx.lineCap = 'round';
         cx.beginPath(); cx.moveTo(tail[0], tail[1]); cx.lineTo(tx, ty); cx.stroke();
-        head(tx, ty, d[0], d[1], 13, 6.5);
+        const hs = clamp(13 * zoomScale, 9, 16); head(tx, ty, d[0], d[1], hs, hs / 2);
         return tail;
       };
       const forceArrow = (fx, fy, x, y, text, side) => {
@@ -429,8 +554,10 @@
         if (side === 'right') ax = x;
         if (side === 'below') ay = y;
         const tail = reactionArrow(ax, ay, d, L, side);
-        if (side === 'below') reactionLabel(text + '=' + fmt(Math.hypot(fx, fy)), tail[0], tail[1] + 22);
-        else reactionLabel(text + '=' + fmt(Math.hypot(fx, fy)), tail[0] - d[1] * 13, tail[1] + d[0] * 13);
+        const value = text + '=' + fmt(Math.hypot(fx, fy));
+        if (side === 'below') reactionLabel(value, tail[0], tail[1] + 22, 'center', [[tail[0] + 34, tail[1] + 20, 'left'], [tail[0] - 34, tail[1] + 20, 'right'], [tail[0], tail[1] + 44, 'center']]);
+        else if (side === 'right') reactionLabel(value, tail[0] - d[1] * 13, tail[1] + d[0] * 13, 'center', [[tail[0] + 24, tail[1] - 18, 'left'], [tail[0] + 24, tail[1] + 18, 'left'], [tail[0] + 58, tail[1], 'left']]);
+        else reactionLabel(value, tail[0] - d[1] * 13, tail[1] + d[0] * 13, 'center', [[tail[0] + 28, tail[1] + 20, 'left'], [tail[0] - 28, tail[1] + 20, 'right']]);
       };
       if (r.rn !== undefined && Math.hypot(r.fx, r.fy) > 1e-9 * rmax) {
         forceArrow(r.fx, r.fy, px, py, 'Rn');
@@ -439,15 +566,15 @@
         if (Math.abs(r.fy) > 1e-6 * rmax) forceArrow(0, r.fy, px, py, 'Ry', 'below');
       }
       if (Math.abs(r.mz) > 1e-6 * rmax) {
-        const rad = 41, centerY = py + 30, positive = r.mz >= 0;
+        const rad = clamp(41 * zoomScale, 26, 58), centerY = py + 30 * zoomScale, positive = r.mz >= 0;
         const startAngle = positive ? Math.PI : 0, endAngle = positive ? 0 : Math.PI;
         cx.save(); cx.strokeStyle = col; cx.fillStyle = col; cx.lineWidth = 2; cx.lineCap = 'round';
         cx.beginPath(); cx.arc(px, centerY, rad, startAngle, endAngle, positive); cx.stroke();
         const ex = px + rad * Math.cos(endAngle), ey = centerY + rad * Math.sin(endAngle);
         const tx = 0, ty = -1;
-        head(ex, ey, tx, ty, 13, 6.5);
+        const hs = clamp(13 * zoomScale, 9, 16); head(ex, ey, tx, ty, hs, hs / 2);
         const sx = px + rad * Math.cos(startAngle), sy = centerY + rad * Math.sin(startAngle);
-        reactionLabel('Mz=' + fmt(r.mz), sx, sy - 14);
+        reactionLabel('Mz=' + fmt(r.mz), sx, sy - 14, 'center', [[sx, sy + 18, 'center'], [sx + (positive ? -34 : 34), sy - 8, positive ? 'right' : 'left']]);
         cx.restore();
       }
     }
@@ -459,6 +586,11 @@
     const names = { N: 'Axial force N (' + S.fu + '), tension +', V: 'Shear force V (' + S.fu + ')', M: 'Bending moment M (' + S.fu + '·' + S.lu + '), drawn on the tension side' };
     if (mx < 1e-12) return names[T] + ' — all zero';
     const colr = { N: [22, 163, 74], V: [147, 51, 234], M: [37, 99, 235] }[T];
+    const isDark = theme === 'dark';
+    const diagTextColor = isDark
+      ? (T === 'M' ? '#60a5fa' : T === 'V' ? '#c084fc' : '#4ade80')
+      : (T === 'M' ? '#1d4ed8' : T === 'V' ? '#7e22ce' : '#15803d');
+
     const k0 = 70 * diagScale / mx, sign = (T === 'M' ? -1 : 1) * (flip ? -1 : 1);
     doc.members.forEach((m, k) => {
       const d = results.diag[k], g = C.mGeom(doc, m), P0 = nodeScr(m.i), P1 = nodeScr(m.j);
@@ -477,7 +609,19 @@
         if (shown.some(j => Math.abs(d.x[j] - d.x[i]) < 0.04 * g.L)) continue;
         shown.push(i);
         const p = pt(i), side = p[2] >= 0 ? 1 : -1;
-        label(fmt(arr[i]), p[0] + nv[0] * side * 11, p[1] + nv[1] * side * 11, 'rgb(' + colr.map(v => Math.round(v * .7)).join(',') + ')');
+        let lx = p[0] + nv[0] * side * 11;
+        let ly = p[1] + nv[1] * side * 11;
+
+        // If at support node and reactions are on, nudge inward along member axis to prevent collision
+        if (S.react && results) {
+          if (i === 0 && doc.supports[m.i]) {
+            lx += u[0] * 20; ly += u[1] * 20;
+          } else if (i === arr.length - 1 && doc.supports[m.j]) {
+            lx -= u[0] * 20; ly -= u[1] * 20;
+          }
+        }
+
+        drawDiagramText(fmt(arr[i]), lx, ly, diagTextColor);
       }
     });
     return names[T];
@@ -643,8 +787,35 @@
     const lt = opt.loadType;
     if (lt === 'moment') {
       const n = hitNode(sx, sy, tol);
-      if (n < 0) { msg('Tap a node to apply a moment.', true); return; }
-      edit(() => { doc.nodeLoads.push(C.mkNodeLoad(n, 0, 0, opt.M)); }); msg('Moment added at N' + (n + 1) + '.'); return;
+      if (n >= 0) {
+        edit(() => { doc.nodeLoads.push(C.mkNodeLoad(n, 0, 0, opt.M)); });
+        msg('Moment added at N' + (n + 1) + '.');
+        return;
+      }
+      const k = hitMember(sx, sy, tol);
+      if (k < 0) {
+        msg('Tap a node or anywhere along a member to apply a moment.', true);
+        return;
+      }
+      const [wx, wy] = toWld(sx, sy);
+      const pr = C.projectOnMember(doc, k, wx, wy);
+      let aDist = pr.t;
+      if (S.snap) {
+        const q = snapAt(sx, sy, 0);
+        const p2 = C.projectOnMember(doc, k, q.x, q.y);
+        if (p2.dist < 1e-4 * (1 + p2.L)) aDist = p2.t;
+      }
+      aDist = clamp(aDist, 0, pr.L);
+      const mem = doc.members[k], startNode = doc.nodes[mem.i], geom = C.mGeom(doc, mem);
+      const posX = +(startNode.x + geom.c * aDist).toFixed(4);
+      const posY = +(startNode.y + geom.s * aDist).toFixed(4);
+
+      edit(() => {
+        const nodeIdx = C.addNodeAt(doc, posX, posY);
+        doc.nodeLoads.push(C.mkNodeLoad(nodeIdx, 0, 0, opt.M));
+      });
+      msg('Moment added on M' + (k + 1) + ' at ' + fmt(aDist) + ' ' + S.lu + ' from start.');
+      return;
     }
     if (lt === 'point') {
       const n = hitNode(sx, sy, tol);
@@ -728,7 +899,16 @@
 
   function refreshOptions() {
     const o = $('opts'); o.replaceChildren();
-    if (tool === 'select' || tool === 'delete') return;
+    const card = $('optsCard');
+    if (tool === 'select' || tool === 'delete') {
+      if (card) card.classList.add('opts-hidden');
+      return;
+    }
+    if (card) card.classList.remove('opts-hidden');
+    const titleMap = { node: 'Node Settings', member: 'Member Settings', support: 'Support Presets', load: 'Load Settings', influence: 'Influence Line Setup' };
+    const titleEl = $('optsTitle');
+    if (titleEl) titleEl.textContent = titleMap[tool] || 'Tool Options';
+
     if (tool === 'node') {
       o.append(fnum('X', () => opt.nx, v => { opt.nx = v; }), fnum('Y', () => opt.ny, v => { opt.ny = v; }),
         el('button', { onclick: () => { let added = false; edit(() => { const n = doc.nodes.length; C.addNodeAt(doc, opt.nx, opt.ny); if (doc.nodes.length === n) return false; added = true; }); msg(added ? 'Node added.' : 'There is already a node there.', !added); } }, 'Add'),
@@ -738,13 +918,6 @@
         chk('Chain', () => opt.chain, v => { opt.chain = v; }),
         el('small', { class: 'muted' }, 'Frame = rigid joints (carries bending). Truss = pinned ends (axial force only). Chain = each member starts where the last one ended.'));
     } else if (tool === 'influence') {
-      if (window.innerWidth <= 900) {
-        o.append(el('button', { class: 'mobile-toggle', onclick: () => { influenceOptionsOpen = !influenceOptionsOpen; refreshOptions(); } }, influenceOptionsOpen ? 'Hide influence controls ▲' : 'Show influence controls ▼'));
-        if (!influenceOptionsOpen) {
-          o.append(el('small', { class: 'muted' }, influenceResult ? 'Influence line is visible below. Tap Show influence controls to edit it.' : 'Set the moving load and target, then show the controls.'));
-          return;
-        }
-      }
       const memberItems = doc.members.map((m, k) => [String(k), 'M' + (k + 1) + ' (N' + (m.i + 1) + ' → N' + (m.j + 1) + ')']);
       const nodeItems = doc.nodes.map((n, k) => [String(k), 'N' + (k + 1)]);
       const supportItems = Object.entries(doc.supports).filter(([n, s]) => C.supportKind(s) !== 'none').map(([n]) => [n, 'N' + (+n + 1)]);
@@ -785,7 +958,7 @@
           }),
           ...(opt.inclInput === 'angle'
             ? [fnum('Angle (deg)', () => opt.inclAngle, v => { opt.inclAngle = v; refreshOptions(); })]
-            : [fnum('Rise', () => opt.rise, v => { opt.rise = v; refreshOptions(); }), fnum('Run', () => opt.run, v => { opt.run = v; refreshOptions(); })]),
+            : [fnum('Rise', () => opt.rise, v => { opt.rise = v; }), fnum('Run', () => opt.run, v => { opt.run = v; })]),
           el('span', { class: 'fld' }, '= ' + fmt(inclAng()) + '°')
         ] : []),
         el('small', { class: 'muted' }, 'Roller slides horizontally (restrains Y). Roller ↕ slides vertically (restrains X). Roller ∠ = roller on a sloping surface. Enter its surface angle, or use Rise and Run (a 1:2 slope = Rise 1, Run 2). Springs / settlement: select the node and open "Custom".'));
@@ -795,7 +968,7 @@
       if (opt.loadType === 'dist') o.append(fnum('w1', () => opt.w1, v => { opt.w1 = v; }), fnum('w2', () => opt.w2, v => { opt.w2 = v; }), fnum('Angle °', () => opt.ang, v => { opt.ang = v; }),
         fopt('From', () => opt.from, v => { opt.from = v; }), fopt('To', () => opt.to, v => { opt.to = v; }), sysSeg());
       if (opt.loadType === 'moment') o.append(fnum('M (' + S.fu + '·' + S.lu + ')', () => opt.M, v => { opt.M = v; }));
-      o.append(el('small', { class: 'muted' }, opt.loadType === 'moment' ? 'Counter-clockwise is positive.' :
+      o.append(el('small', { class: 'muted' }, opt.loadType === 'moment' ? 'Tap a node or any location along a member to place a moment. Counter-clockwise is positive.' :
         'Angle = direction the arrow comes FROM: 90° pushes down, 180° pushes right, 270° pushes up, 0° pushes left. Distributed w is per unit member length (w1 at From, w2 at To; blank = whole member). Local angles are measured from the member axis.'));
     }
   }
@@ -808,6 +981,7 @@
     document.querySelectorAll('[data-mode]').forEach(b => { b.classList.toggle('active', b.dataset.mode === mode); b.disabled = b.dataset.mode !== 'model' && !results; });
     $('bUndo').disabled = !undoStack.length; $('bRedo').disabled = !redoStack.length;
     $('dscale').disabled = !results || mode === 'model'; $('flip').disabled = !results || mode === 'model' || mode === 'defl';
+    const snapBtn = $('bSnapToggle'); if (snapBtn) snapBtn.classList.toggle('active', !!S.snap);
   }
 
   /* ---------------- panel ---------------- */
@@ -865,7 +1039,17 @@
     if (results) {
       s = psec(P); const u = results.res.u[n], r = results.res.reactions[n];
       s.append(el('b', {}, 'Results'), table(null, [['ux (' + lu + ')', fmt(u.ux)], ['uy (' + lu + ')', fmt(u.uy)], ['rotation (rad)', fmt(u.rz)]]));
-      if (r) s.append(table(null, [['Rx (' + S.fu + ')', fmt(r.fx)], ['Ry (' + S.fu + ')', fmt(r.fy)], ['Mz (' + S.fu + '·' + lu + ')', fmt(r.mz)], ...(r.rn !== undefined ? [['R⊥ to surface (' + S.fu + ')', fmt(r.rn)]] : [])]));
+      if (r) {
+        const R_res = Math.hypot(r.fx, r.fy);
+        const R_ang = (Math.atan2(r.fy, r.fx) * 180 / Math.PI).toFixed(1);
+        s.append(table(null, [
+          ['Rx (' + S.fu + ')', fmt(r.fx)],
+          ['Ry (' + S.fu + ')', fmt(r.fy)],
+          ['Resultant R (' + S.fu + ')', fmt(R_res) + ' @ ' + R_ang + '°'],
+          ['Mz (' + S.fu + '·' + lu + ')', fmt(r.mz)],
+          ...(r.rn !== undefined ? [['R⊥ to surface (' + S.fu + ')', fmt(r.rn)]] : [])
+        ]));
+      }
     }
     s = psec(P); s.append(el('button', { class: 'danger', onclick: deleteSelected }, 'Delete node'));
   }
@@ -903,7 +1087,18 @@
         row(pnum('From', ld.a ?? 0, v => { ld.a = v; }), pnum('To', ld.b, v => { ld.b = v; }, true)), row(sy, del)));
     });
     s.append(row(el('button', { onclick: () => edit(() => { m.loads.push(C.mkPoint(+(g.L / 2).toFixed(3), 10, 90, 'global')); }) }, '+ Point'),
-      el('button', { onclick: () => edit(() => { m.loads.push(C.mkDist(0, null, 10, 10, 90, 'global')); }) }, '+ Distributed')));
+      el('button', { onclick: () => edit(() => { m.loads.push(C.mkDist(0, null, 10, 10, 90, 'global')); }) }, '+ Distributed'),
+      el('button', { onclick: () => {
+        edit(() => {
+          const a = doc.nodes[m.i], geom = C.mGeom(doc, m);
+          const half = geom.L / 2;
+          const nx = +(a.x + geom.c * half).toFixed(4), ny = +(a.y + geom.s * half).toFixed(4);
+          const n = C.addNodeAt(doc, nx, ny);
+          doc.nodeLoads.push(C.mkNodeLoad(n, 0, 0, 10));
+        });
+        msg('Moment load added at midpoint of member.');
+        refreshPanel();
+      } }, '+ Moment')));
     if (results) {
       s = psec(P); const r = results.res.members[k], st = results.diag[k].stats;
       s.append(el('b', {}, 'Results'),
@@ -965,13 +1160,71 @@
     return d;
   }
   function loadDoc(d, keepSections) { if (!keepSections) sectionAssignments = {}; edit(() => { doc = d; }); sel = null; pending = null; fitView(); }
-  function newStructure() {
-    const name = prompt('Name this structure:', structureName === 'Untitled structure' ? '' : structureName);
-    if (name === null) return;
-    structureName = name.trim() || 'Untitled structure';
-    sectionLibrary = []; sectionAssignments = {};
-    saveName(); loadDoc(C.newDoc(), true); closeMenu(); msg('New structure: ' + structureName + '.');
+  /* ---------------- M3 Native Dialogs (No Page Says: //) ---------------- */
+  function showDialog(cardEl) {
+    const M = $('modal');
+    M.replaceChildren(cardEl);
+    M.hidden = false;
   }
+  function closeDialog() {
+    const M = $('modal');
+    M.hidden = true;
+    M.replaceChildren();
+  }
+
+  function showConfirmDialog({ title, message, confirmText = 'Confirm', cancelText = 'Cancel', isDanger = false, onConfirm }) {
+    const card = el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, title),
+      el('p', { class: 'm3-dialog-message' }, message),
+      el('div', { class: 'm3-dialog-actions' },
+        el('button', { class: 'm3-btn-text', onclick: closeDialog }, cancelText),
+        el('button', { class: isDanger ? 'm3-btn-danger' : 'm3-btn-filled', onclick: () => {
+          closeDialog();
+          if (onConfirm) onConfirm();
+        }}, confirmText)
+      )
+    );
+    showDialog(card);
+  }
+
+  function showPromptDialog({ title, message, defaultValue = '', placeholder = '', confirmText = 'Save', cancelText = 'Cancel', onConfirm }) {
+    const input = el('input', { type: 'text', class: 'm3-input', value: defaultValue, placeholder });
+    const card = el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, title),
+      message ? el('p', { class: 'm3-dialog-message' }, message) : null,
+      el('div', { style: 'margin: 8px 0;' }, input),
+      el('div', { class: 'm3-dialog-actions' },
+        el('button', { class: 'm3-btn-text', onclick: closeDialog }, cancelText),
+        el('button', { class: 'm3-btn-filled', onclick: () => {
+          const val = input.value.trim();
+          closeDialog();
+          if (onConfirm) onConfirm(val);
+        }}, confirmText)
+      )
+    );
+    showDialog(card);
+    setTimeout(() => { input.focus(); input.select(); }, 60);
+  }
+
+  /* ---------------- Project Management & Files ---------------- */
+  function newStructure() {
+    showPromptDialog({
+      title: 'New Structure',
+      message: 'Enter a name for the new structure:',
+      defaultValue: structureName === 'Untitled structure' ? '' : structureName,
+      placeholder: 'Structure name',
+      confirmText: 'Create',
+      onConfirm: name => {
+        structureName = name.trim() || 'Untitled structure';
+        sectionLibrary = []; sectionAssignments = {};
+        saveName();
+        loadDoc(C.newDoc(), true);
+        closeDrawer();
+        msg('New structure: ' + structureName + '.');
+      }
+    });
+  }
+
   const PROJECTS_KEY = 'frame2d_projects_v1';
   function readProjects() {
     try {
@@ -982,105 +1235,277 @@
   function writeProjects(p) {
     try { localStorage.setItem(PROJECTS_KEY, JSON.stringify(p)); return true; } catch (e) { return false; }
   }
+
   function saveProject() {
     let name = structureName;
-    if (!name || name === 'Untitled structure') name = prompt('Save structure as:', '');
-    if (name === null) return;
+    if (!name || name === 'Untitled structure') {
+      showPromptDialog({
+        title: 'Save Project',
+        message: 'Enter a project name to save in local library:',
+        defaultValue: structureName === 'Untitled structure' ? '' : structureName,
+        placeholder: 'Project name',
+        confirmText: 'Save',
+        onConfirm: enteredName => doSaveProject(enteredName)
+      });
+      return;
+    }
+    doSaveProject(name);
+  }
+
+  function doSaveProject(name) {
     name = String(name || '').trim() || 'Untitled structure';
     const projects = readProjects();
-    if (projects[name] && !confirm('Replace the saved project "' + name + '"?')) return;
-    projects[name] = { doc: clone(doc), S: clone(S), view: clone(view), sections: clone(sectionLibrary), assignments: clone(sectionAssignments), savedAt: new Date().toISOString() };
-    if (!writeProjects(projects)) { msg('Could not save. The browser storage may be full.', true); return; }
-    structureName = name; saveName(); msg('Saved project: ' + name + '.'); closeMenu();
+    if (projects[name]) {
+      showConfirmDialog({
+        title: 'Replace Saved Project?',
+        message: 'A saved project named "' + name + '" already exists. Do you want to overwrite it?',
+        confirmText: 'Replace',
+        isDanger: true,
+        onConfirm: () => performProjectWrite(projects, name)
+      });
+      return;
+    }
+    performProjectWrite(projects, name);
   }
+
+  function performProjectWrite(projects, name) {
+    projects[name] = { doc: clone(doc), S: clone(S), view: clone(view), sections: clone(sectionLibrary), assignments: clone(sectionAssignments), savedAt: new Date().toISOString() };
+    if (!writeProjects(projects)) { msg('Could not save. Storage may be full.', true); return; }
+    structureName = name;
+    saveName();
+    msg('Saved project: ' + name + '.');
+    closeDrawer();
+  }
+
   function loadProject(name) {
     const p = readProjects()[name]; if (!p || !p.doc) return;
     structureName = name; saveName(); Object.assign(S, p.S || {});
     sectionLibrary = Array.isArray(p.sections) ? p.sections : [];
     sectionAssignments = p.assignments && typeof p.assignments === 'object' ? p.assignments : {};
     if (p.view && isFinite(p.view.s)) { view = p.view; viewInit = true; }
-    loadDoc(normalizeDoc(p.doc), true); closeMenu(); msg('Loaded project: ' + name + '.');
+    loadDoc(normalizeDoc(p.doc), true);
+    closeDialog();
+    closeDrawer();
+    msg('Loaded project: ' + name + '.');
   }
+
   function deleteProject(name) {
-    if (!confirm('Delete the saved project "' + name + '"?')) return;
-    const projects = readProjects(); delete projects[name]; writeProjects(projects); openProjectList();
+    showConfirmDialog({
+      title: 'Delete Saved Project',
+      message: 'Are you sure you want to permanently delete "' + name + '"?',
+      confirmText: 'Delete',
+      isDanger: true,
+      onConfirm: () => {
+        const projects = readProjects();
+        delete projects[name];
+        writeProjects(projects);
+        openProjectList();
+        msg('Deleted project "' + name + '".');
+      }
+    });
   }
+
   function createSection() {
-    const name = prompt('Section name:', 'Rectangular section'); if (name === null) return;
-    const E = parseFloat(prompt('E (modulus of elasticity):', S.E));
-    const A = parseFloat(prompt('A (area):', S.A));
-    const I = parseFloat(prompt('I (second moment of area):', S.I));
-    if (!name.trim() || !isFinite(E) || E <= 0 || !isFinite(A) || A <= 0 || !isFinite(I) || I <= 0) { msg('Enter a name and positive E, A, and I values.', true); return; }
-    sectionLibrary.push({ id: 'section-' + Date.now(), name: name.trim(), E, A, I });
-    save(); openSections();
+    const nameInput = el('input', { type: 'text', class: 'm3-input', value: 'Rectangular section', placeholder: 'Section name' });
+    const eInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(S.E) });
+    const aInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(S.A) });
+    const iInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(S.I) });
+
+    const card = el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, 'New Cross-Section Profile'),
+      el('p', { class: 'm3-dialog-message' }, 'Define reusable E, A, and I parameters for members:'),
+      el('div', { class: 'm3-form-grid' },
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'Section Name'), nameInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'E (Modulus of Elasticity in ' + S.fu + '/' + S.lu + '²)'), eInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'A (Cross-Section Area in ' + S.lu + '²)'), aInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'I (Second Moment of Area in ' + S.lu + '⁴)'), iInput)
+      ),
+      el('div', { class: 'm3-dialog-actions' },
+        el('button', { class: 'm3-btn-text', onclick: openSections }, 'Cancel'),
+        el('button', { class: 'm3-btn-filled', onclick: () => {
+          const name = nameInput.value.trim();
+          const E = parseFloat(eInput.value);
+          const A = parseFloat(aInput.value);
+          const I = parseFloat(iInput.value);
+          if (!name || !isFinite(E) || E <= 0 || !isFinite(A) || A <= 0 || !isFinite(I) || I <= 0) {
+            msg('Please enter valid, positive values for E, A, and I.', true);
+            return;
+          }
+          sectionLibrary.push({ id: 'section-' + Date.now(), name, E, A, I });
+          save();
+          openSections();
+          msg('Section "' + name + '" created.');
+        }}, 'Save Section')
+      )
+    );
+    showDialog(card);
   }
+
   function deleteSection(id) {
-    const sec = sectionLibrary.find(s => s.id === id); if (!sec || !confirm('Delete section "' + sec.name + '"?')) return;
-    sectionLibrary = sectionLibrary.filter(s => s.id !== id);
-    Object.keys(sectionAssignments).forEach(k => { if (sectionAssignments[k] === id) delete sectionAssignments[k]; });
-    save(); openSections(); refreshPanel();
+    const sec = sectionLibrary.find(s => s.id === id);
+    if (!sec) return;
+    showConfirmDialog({
+      title: 'Delete Section Profile',
+      message: 'Are you sure you want to delete profile "' + sec.name + '"?',
+      confirmText: 'Delete',
+      isDanger: true,
+      onConfirm: () => {
+        sectionLibrary = sectionLibrary.filter(s => s.id !== id);
+        Object.keys(sectionAssignments).forEach(k => { if (sectionAssignments[k] === id) delete sectionAssignments[k]; });
+        save();
+        openSections();
+        refreshPanel();
+        msg('Section profile deleted.');
+      }
+    });
   }
+
   function openSections() {
-    const M = $('modal'); M.replaceChildren(); M.hidden = false;
     const rows = sectionLibrary.length ? sectionLibrary.map(s => el('div', { class: 'project-row' },
       el('div', {}, el('b', {}, s.name), el('small', { class: 'muted' }, 'E=' + fmt(s.E) + ', A=' + fmt(s.A) + ', I=' + fmt(s.I))),
-      el('button', { class: 'danger', onclick: () => deleteSection(s.id) }, 'Delete'))) : [el('small', { class: 'muted' }, 'No sections created in this project yet.')];
-    M.append(el('div', { class: 'card' }, el('h3', {}, 'Sections in ' + structureName),
-      el('small', { class: 'muted' }, 'Create reusable E, A, I definitions, then assign them from a member panel.'),
-      ...rows, el('div', { class: 'row' }, el('button', { class: 'primary', onclick: createSection }, 'Create section'), el('button', { onclick: closeMenu }, 'Close'))));
+      el('div', { class: 'project-row-actions' },
+        el('button', { class: 'btn-delete', onclick: () => deleteSection(s.id) }, 'Delete')
+      ))) : [el('small', { class: 'muted' }, 'No sections created in this project yet.')];
+    const card = el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, 'Sections in ' + structureName),
+      el('p', { class: 'm3-dialog-message' }, 'Manage reusable cross-section properties:'),
+      ...rows,
+      el('div', { class: 'm3-dialog-actions' },
+        el('button', { class: 'm3-btn-filled', onclick: createSection }, '+ New Section'),
+        el('button', { class: 'm3-btn-text', onclick: closeDialog }, 'Close'))
+    );
+    showDialog(card);
   }
+
   function openProjectList() {
-    const M = $('modal'); M.replaceChildren(); M.hidden = false;
     const projects = readProjects(), names = Object.keys(projects).sort((a, b) => a.localeCompare(b));
     const list = names.length ? names.map(name => {
       const when = projects[name].savedAt ? new Date(projects[name].savedAt).toLocaleString() : '';
-      return el('div', { class: 'project-row' }, el('div', {}, el('b', {}, name), el('small', { class: 'muted' }, when)),
-        el('button', { onclick: () => loadProject(name) }, 'Open'), el('button', { class: 'danger', onclick: () => deleteProject(name) }, 'Delete'));
+      return el('div', { class: 'project-row' },
+        el('div', {}, el('b', {}, name), el('small', { class: 'muted' }, when)),
+        el('div', { class: 'project-row-actions' },
+          el('button', { class: 'btn-open', onclick: () => loadProject(name) }, 'Open'),
+          el('button', { class: 'btn-delete', onclick: () => deleteProject(name) }, 'Delete')
+        )
+      );
     }) : [el('small', { class: 'muted' }, 'No saved projects yet. Use Save to create one.')];
-    M.append(el('div', { class: 'card' }, el('h3', {}, 'Load saved project'), ...list,
-      el('div', { class: 'row' }, el('button', { class: 'primary', onclick: closeMenu }, 'Close'))));
+    const card = el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, 'Saved Projects Library'),
+      el('p', { class: 'm3-dialog-message' }, 'Choose a project to load:'),
+      ...list,
+      el('div', { class: 'm3-dialog-actions' },
+        el('button', { class: 'm3-btn-text', onclick: closeDialog }, 'Close'))
+    );
+    showDialog(card);
   }
-  function saveFile() {
-    const blob = new Blob([JSON.stringify({ app: 'frame2d', version: 1, doc, S }, null, 1)], { type: 'application/json' });
-    const filename = (structureName || 'structure').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || 'structure';
-    const a = el('a', { href: URL.createObjectURL(blob), download: filename + '.json' }); document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+
+  function exportBackup() {
+    const data = JSON.stringify({
+      app: 'struc2d',
+      format: 's2d',
+      version: 1,
+      structureName: structureName || 'Untitled structure',
+      doc,
+      S,
+      sections: sectionLibrary,
+      assignments: sectionAssignments,
+      exportedAt: new Date().toISOString()
+    }, null, 2);
+    const safeName = (structureName || 'structure').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || 'structure';
+    const filename = safeName + '.s2d';
+
+    if (window.AndroidBridge && window.AndroidBridge.handleExportBackup) {
+      window.AndroidBridge.handleExportBackup(data, filename);
+      closeDrawer();
+      return;
+    }
+
+    // Web fallback: Custom dialog for Save or Share
+    const card = el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, 'Export Backup (' + filename + ')'),
+      el('p', { class: 'm3-dialog-message' }, 'Choose how you would like to export your project:'),
+      el('div', { class: 'm3-dialog-actions', style: 'flex-direction:column;gap:8px;align-items:stretch;' },
+        el('button', { class: 'm3-btn-filled', onclick: () => {
+          const blob = new Blob([data], { type: 'application/octet-stream' });
+          const a = el('a', { href: URL.createObjectURL(blob), download: filename });
+          document.body.append(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+          closeDialog();
+          msg('Saved backup: ' + filename);
+        } }, '💾 Save to Storage (.s2d)'),
+        el('button', { class: 'm3-btn-filled', style: 'background:var(--surface-tertiary);color:var(--text-main);', onclick: () => {
+          if (navigator.share) {
+            const file = new File([data], filename, { type: 'application/octet-stream' });
+            navigator.share({ title: 'Struc2D Backup', files: [file] }).catch(() => {});
+          } else {
+            const blob = new Blob([data], { type: 'application/octet-stream' });
+            const a = el('a', { href: URL.createObjectURL(blob), download: filename });
+            document.body.append(a); a.click(); a.remove();
+          }
+          closeDialog();
+        } }, '↗️ Share File'),
+        el('button', { class: 'm3-btn-text', onclick: closeDialog }, 'Cancel')
+      )
+    );
+    showDialog(card);
+    closeDrawer();
   }
-  function openFile() {
-    const i = el('input', { type: 'file', accept: '.json,application/json' });
-    i.addEventListener('change', () => {
-      const f = i.files[0]; if (!f) return;
-      f.text().then(t => { const o = JSON.parse(t); if (o.S) Object.assign(S, o.S); structureName = f.name.replace(/\.json$/i, '') || 'Untitled structure'; sectionLibrary = []; saveName(); loadDoc(normalizeDoc(o.doc || o)); closeMenu(); msg('Loaded: ' + structureName + '.'); }).catch(() => msg('Could not read that file.', true));
-    });
-    i.click();
+
+  function importBackup() {
+    let inp = $('f2dFileInput');
+    if (!inp) {
+      inp = el('input', { type: 'file', accept: '.s2d,.f2d,.json,application/octet-stream,application/json,text/plain,*/*' });
+      document.body.append(inp);
+    }
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      f.text().then(t => {
+        try {
+          const o = JSON.parse(t);
+          if (o.S) Object.assign(S, o.S);
+          structureName = f.name.replace(/\.(s2d|f2d|json)$/i, '') || o.structureName || 'Untitled structure';
+          sectionLibrary = Array.isArray(o.sections) ? o.sections : [];
+          sectionAssignments = (o.assignments && typeof o.assignments === 'object') ? o.assignments : {};
+          saveName();
+          loadDoc(normalizeDoc(o.doc || o));
+          closeDrawer();
+          msg('Loaded backup: ' + structureName + '.s2d');
+        } catch (e) {
+          msg('Could not read backup file.', true);
+        }
+      }).catch(() => msg('Could not read file.', true));
+      inp.value = '';
+    };
+    inp.click();
+    closeDrawer();
   }
-  function closeMenu() { $('modal').hidden = true; refreshOptions(); draw(); }
-  function openMenu() {
-    const M = $('modal'); M.replaceChildren(); M.hidden = false;
-    const setS = k => v => { S[k] = v; save(); draw(); };
-    const card = el('div', { class: 'card' }, el('h3', {}, 'Menu'),
-      el('div', { class: 'row' }, el('b', {}, 'Settings')),
-      row(fnum('Grid', () => S.grid, v => { if (v > 0) setS('grid')(v); }), chk('Snap to grid', () => S.snap, setS('snap'))),
-      row(chk('Show labels (N1, M1)', () => S.labels, setS('labels')), chk('Show reactions', () => S.react, setS('react'))),
-      row(textFld('Force unit', 'fu'), textFld('Length unit', 'lu')),
-      el('div', { class: 'row' }, el('b', {}, 'Defaults for new members')),
-      row(fnum('E', () => S.E, v => { if (v > 0) setS('E')(v); }), fnum('A', () => S.A, v => { if (v > 0) setS('A')(v); }), fnum('I', () => S.I, v => { if (v > 0) setS('I')(v); })),
-      el('small', { class: 'muted' }, 'Use consistent units (for kN and m: E in kN/m², A in m², I in m⁴). Steel E ≈ 2e8 kN/m².'),
-      el('div', { class: 'row' }, el('b', {}, 'File')),
-      el('div', { class: 'row' }, el('b', {}, 'Theme')),
-      row(seg([['light', 'Light'], ['dark', 'Dark']], theme, setTheme)),
-      el('div', { class: 'row' }, el('b', {}, 'Project')),
-      el('div', { class: 'row' }, el('b', {}, structureName)),
-      row(el('button', { onclick: newStructure }, 'New'), el('button', { onclick: openProjectList }, 'Load'), el('button', { onclick: saveProject }, 'Save'), el('button', { onclick: openSections }, 'Sections')),
-      el('small', { class: 'muted' }, 'Projects are saved inside this browser on this device.'),
-      el('div', { class: 'row' }, el('b', {}, 'File backup')),
-      row(el('button', { onclick: openFile }, 'Import JSON'), el('button', { onclick: saveFile }, 'Export JSON')),
-      el('div', { class: 'row' }, el('b', {}, 'Examples (replace the current model; Undo brings it back)')),
-      row(el('button', { onclick: () => { loadDoc(buildExample('beam')); closeMenu(); } }, 'Beam + UDL'), el('button', { onclick: () => { loadDoc(buildExample('truss')); closeMenu(); } }, 'Truss'), el('button', { onclick: () => { loadDoc(buildExample('portal')); closeMenu(); } }, 'Portal frame'), el('button', { onclick: () => { loadDoc(buildExample('incl')); closeMenu(); } }, 'Inclined roller')),
-      el('div', { class: 'row' }, el('button', { class: 'primary', onclick: closeMenu }, 'Close')));
-    M.append(card);
+
+  function isDrawerOpen() { const d = $('navDrawer'); return d && d.classList.contains('open'); }
+  function openDrawer() { syncDrawerSettings(); const d = $('navDrawer'), s = $('drawerScrim'); if (d) d.classList.add('open'); if (s) s.classList.add('open'); }
+  function closeDrawer() { const d = $('navDrawer'), s = $('drawerScrim'); if (d) d.classList.remove('open'); if (s) s.classList.remove('open'); }
+  function syncDrawerSettings() {
+    const fu = $('dFu');
+    if (fu) {
+      if (S.fu && ![...fu.options].some(o => o.value === S.fu)) fu.add(new Option(S.fu, S.fu));
+      fu.value = S.fu;
+    }
+    const lu = $('dLu');
+    if (lu) {
+      if (S.lu && ![...lu.options].some(o => o.value === S.lu)) lu.add(new Option(S.lu, S.lu));
+      lu.value = S.lu;
+    }
+    const grid = $('dGrid'); if (grid) grid.value = S.grid;
+    const snap = $('dSnap'); if (snap) snap.checked = !!S.snap;
+    const labels = $('dLabels'); if (labels) labels.checked = !!S.labels;
+    const react = $('dReact'); if (react) react.checked = !!S.react;
+    const qreact = $('quickReact'); if (qreact) qreact.checked = !!S.react;
+    const defE = $('dDefE'); if (defE) defE.value = S.E;
+    const defA = $('dDefA'); if (defA) defA.value = S.A;
+    const defI = $('dDefI'); if (defI) defI.value = S.I;
   }
-  function textFld(label, key) { const i = el('input', { type: 'text', class: 'num', maxlength: '8' }); i.value = S[key]; i.addEventListener('change', () => { S[key] = i.value.trim() || S[key]; save(); draw(); refreshPanel(); }); return el('label', { class: 'fld' }, label, i); }
+  function openMenu() { openDrawer(); }
+  function closeMenu() { closeDrawer(); closeDialog(); }
 
   /* ---------------- wiring ---------------- */
   document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => { if (b.dataset.tool === tool && tool === 'member') { pending = null; msg('Stopped. Tap a start point.'); draw(); } else setTool(b.dataset.tool); }));
@@ -1089,10 +1514,62 @@
   $('bSolve').addEventListener('click', solve); $('bFit').addEventListener('click', fitView);
   $('bZin').addEventListener('click', () => zoomAt(W / 2, H / 2, 1.3)); $('bZout').addEventListener('click', () => zoomAt(W / 2, H / 2, 1 / 1.3));
   $('bInfo').addEventListener('click', () => { panelOpen = !panelOpen; refreshPanel(); draw(); });
-  $('bMenu').addEventListener('click', openMenu);
+  $('bMenu').addEventListener('click', openDrawer);
+  const bDrawerClose = $('bDrawerClose'); if (bDrawerClose) bDrawerClose.addEventListener('click', closeDrawer);
+  const scrim = $('drawerScrim'); if (scrim) scrim.addEventListener('click', closeDrawer);
   $('dscale').addEventListener('input', e => { diagScale = parseFloat(e.target.value); draw(); });
   $('flip').addEventListener('change', e => { flip = e.target.checked; draw(); });
-  $('modal').addEventListener('click', e => { if (e.target === $('modal')) closeMenu(); });
+  $('modal').addEventListener('click', e => { if (e.target === $('modal')) closeDialog(); });
+
+  const bProj = $('bProjName'); if (bProj) bProj.addEventListener('click', () => {
+    showPromptDialog({
+      title: 'Rename Structure',
+      message: 'Enter structure name:',
+      defaultValue: structureName,
+      confirmText: 'Rename',
+      onConfirm: name => {
+        structureName = name.trim() || 'Untitled structure';
+        saveName();
+        msg('Renamed to ' + structureName);
+      }
+    });
+  });
+
+  const bTheme = $('bThemeQuick'); if (bTheme) bTheme.addEventListener('click', toggleTheme);
+  const bZen = $('bZen'); if (bZen) bZen.addEventListener('click', () => toggleZen(true));
+  const bZenRes = $('bZenRestore'); if (bZenRes) bZenRes.addEventListener('click', () => toggleZen(false));
+  const bOMin = $('bOptsMin'); if (bOMin) bOMin.addEventListener('click', toggleOptsMin);
+  const bOClose = $('bOptsClose'); if (bOClose) bOClose.addEventListener('click', () => setTool('select'));
+  const bDiagToggle = $('bDiagSettingsToggle'); if (bDiagToggle) bDiagToggle.addEventListener('click', toggleDiagSettings);
+  const bSnap = $('bSnapToggle'); if (bSnap) bSnap.addEventListener('click', toggleSnap);
+
+  // Drawer buttons
+  const dNew = $('dActNew'); if (dNew) dNew.addEventListener('click', () => { closeDrawer(); newStructure(); });
+  const dSave = $('dActSave'); if (dSave) dSave.addEventListener('click', () => { closeDrawer(); saveProject(); });
+  const dProj = $('dActProjects'); if (dProj) dProj.addEventListener('click', () => { closeDrawer(); openProjectList(); });
+  const dSec = $('dActSections'); if (dSec) dSec.addEventListener('click', () => { closeDrawer(); openSections(); });
+  const dImp = $('dActImport'); if (dImp) dImp.addEventListener('click', () => { closeDrawer(); importBackup(); });
+  const dExp = $('dActExport'); if (dExp) dExp.addEventListener('click', () => { closeDrawer(); exportBackup(); });
+
+  // Drawer live bindings
+  $('dFu')?.addEventListener('change', e => { S.fu = e.target.value.trim() || 'kN'; save(); draw(); refreshPanel(); });
+  $('dLu')?.addEventListener('change', e => { S.lu = e.target.value.trim() || 'm'; save(); draw(); refreshPanel(); });
+  $('dGrid')?.addEventListener('change', e => { const v = parseFloat(e.target.value); if (v > 0) { S.grid = v; save(); draw(); } });
+  $('dSnap')?.addEventListener('change', e => { S.snap = e.target.checked; save(); refreshButtons(); draw(); });
+  $('dLabels')?.addEventListener('change', e => { S.labels = e.target.checked; save(); draw(); });
+  $('dReact')?.addEventListener('change', e => { S.react = e.target.checked; const qr = $('quickReact'); if (qr) qr.checked = S.react; save(); draw(); });
+  $('quickReact')?.addEventListener('change', e => { S.react = e.target.checked; const dr = $('dReact'); if (dr) dr.checked = S.react; save(); draw(); });
+  $('dDefE')?.addEventListener('change', e => { const v = parseFloat(e.target.value); if (v > 0) { S.E = v; save(); } });
+  $('dDefA')?.addEventListener('change', e => { const v = parseFloat(e.target.value); if (v > 0) { S.A = v; save(); } });
+  $('dDefI')?.addEventListener('change', e => { const v = parseFloat(e.target.value); if (v > 0) { S.I = v; save(); } });
+
+  document.addEventListener('click', e => {
+    const pop = $('diagSettingsPopover');
+    const btn = $('bDiagSettingsToggle');
+    if (pop && !pop.classList.contains('popover-hidden') && !pop.contains(e.target) && btn && e.target !== btn && !btn.contains(e.target)) {
+      pop.classList.add('popover-hidden');
+    }
+  });
 
   window.addEventListener('keydown', e => {
     const tag = (e.target.tagName || '').toLowerCase();
@@ -1103,7 +1580,14 @@
     if (mod && k === 'y') { redo(); e.preventDefault(); return; }
     if (mod && e.key === 'Enter') { solve(); e.preventDefault(); return; }
     if (mod || e.altKey) return;
-    if (k === 'escape') { if (pending) { pending = null; msg('Stopped.'); draw(); } else { sel = null; setTool('select'); refreshPanel(); } return; }
+    if (k === 'escape') {
+      if (isDrawerOpen()) { closeDrawer(); return; }
+      if (zenMode) { toggleZen(false); return; }
+      if (!$('modal').hidden) { closeDialog(); return; }
+      if (pending) { pending = null; msg('Stopped.'); draw(); }
+      else { sel = null; setTool('select'); refreshPanel(); }
+      return;
+    }
     if (k === 'delete' || k === 'backspace') { deleteSelected(); e.preventDefault(); return; }
     const map = { v: 'select', n: 'node', m: 'member', s: 'support', l: 'load', i: 'influence', d: 'delete' };
     if (map[k]) setTool(map[k]); else if (k === 'f') fitView();
@@ -1114,21 +1598,53 @@
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) navigator.serviceWorker.register('sw.js').catch(() => { });
 
   function installMobileBackPrompt() {
-    if (window.innerWidth > 900 || !window.history || !window.history.pushState) return;
-    history.pushState({ frame2dBackGuard: true }, '', location.href);
-    const onBack = () => {
-      if (!$('modal').hidden) { closeMenu(); history.pushState({ frame2dBackGuard: true }, '', location.href); return; }
-      if (panelOpen) { panelOpen = false; refreshPanel(); history.pushState({ frame2dBackGuard: true }, '', location.href); return; }
-      if (tool !== 'select') { setTool('select'); history.pushState({ frame2dBackGuard: true }, '', location.href); return; }
-      if (confirm('Exit the app?')) {
-        window.removeEventListener('popstate', onBack);
-        setTimeout(() => history.back(), 0);
-      } else history.pushState({ frame2dBackGuard: true }, '', location.href);
+    window.handleAndroidBackPressed = function() {
+      if (isDrawerOpen()) { closeDrawer(); return true; }
+      if (zenMode) { toggleZen(false); return true; }
+      const modal = $('modal');
+      if (modal && !modal.hidden) {
+        // If the modal showing is the Exit dialog itself, pressing Back should exit immediately!
+        if (modal.textContent && modal.textContent.indexOf('Exit Struc2D') !== -1) {
+          if (window.AndroidBridge && typeof window.AndroidBridge.exitApp === 'function') {
+            window.AndroidBridge.exitApp();
+          } else {
+            window.close();
+          }
+          return false;
+        }
+        closeDialog();
+        return true;
+      }
+      if (panelOpen) { panelOpen = false; refreshPanel(); return true; }
+      if (tool !== 'select') { setTool('select'); return true; }
+
+      showConfirmDialog({
+        title: 'Exit Struc2D',
+        message: 'Are you sure you want to exit the application?',
+        confirmText: 'Exit',
+        isDanger: true,
+        onConfirm: () => {
+          if (window.AndroidBridge && typeof window.AndroidBridge.exitApp === 'function') {
+            window.AndroidBridge.exitApp();
+          } else {
+            window.close();
+          }
+        }
+      });
+      return true;
     };
-    window.addEventListener('popstate', onBack);
+
+    if (window.history && window.history.pushState) {
+      history.pushState({ frame2dBackGuard: true }, '', location.href);
+      window.addEventListener('popstate', () => {
+        window.handleAndroidBackPressed();
+        history.pushState({ frame2dBackGuard: true }, '', location.href);
+      });
+    }
   }
 
   applyTheme(); restore(); installMobileBackPrompt();
   refreshOptions(); refreshButtons(); refreshPanel(); resize(); msg(HINTS.select);
-  window.Frame2D = { get doc() { return doc; }, get results() { return results; }, get view() { return view; }, solve, setTool, fitView, buildExample, loadDoc }; // used by tests
+  window.Struc2D = window.Frame2D = { get doc() { return doc; }, get results() { return results; }, get view() { return view; }, solve, setTool, fitView, buildExample, loadDoc }; // used by tests
 })();
+
