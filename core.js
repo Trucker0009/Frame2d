@@ -29,6 +29,7 @@
   const mkPoint = (a, F, ang, system) => recalcLoad({ kind: 'point', a, F, ang, system: system || 'global' });
   const mkDist = (a, b, w1, w2, ang, system) => recalcLoad({ kind: 'dist', a, b, w1, w2, ang, system: system || 'global' });
   const mkNodeLoad = (node, F, ang, mz) => recalcNodeLoad({ node, F, ang, mz: mz || 0 });
+  const mkThermal = (dT, dTg, h) => ({ kind: 'thermal', dT: +dT || 0, dTg: +dTg || 0, h: +h || 0.3 });
 
   function mGeom(doc, m) {
     const a = doc.nodes[m.i], b = doc.nodes[m.j];
@@ -40,6 +41,35 @@
     const m = doc.members[k], a = doc.nodes[m.i], g = mGeom(doc, m);
     const t = (x - a.x) * g.c + (y - a.y) * g.s;
     return { t, dist: Math.hypot(x - (a.x + g.c * t), y - (a.y + g.s * t)), L: g.L };
+  }
+
+  function isMemberReversed(doc, m) {
+    if (!doc || !doc.nodes || !doc.nodes[m.i] || !doc.nodes[m.j]) return false;
+    const a = doc.nodes[m.i], b = doc.nodes[m.j];
+    const dx = b.x - a.x;
+    if (Math.abs(dx) > 1e-6) return dx < 0;
+    return b.y - a.y < 0;
+  }
+
+  function canonicalDiag(doc, m, raw) {
+    if (!raw) return null;
+    const rev = isMemberReversed(doc, m);
+    if (!rev) return { rev: false, raw, x: raw.x, N: raw.N, V: raw.V, M: raw.M, v: raw.v, stats: raw.stats };
+    const L = mGeom(doc, m).L, n = raw.x.length;
+    const x = new Array(n), N = new Array(n), V = new Array(n), M = new Array(n), v = raw.v ? new Array(n) : [];
+    for (let i = 0; i < n; i++) {
+      const src = n - 1 - i;
+      x[i] = Math.max(0, Math.min(L, L - raw.x[src]));
+      N[i] = raw.N[src]; V[i] = raw.V[src];
+      M[i] = Math.abs(raw.M[src]) < 1e-12 ? 0 : -raw.M[src];
+      if (raw.v) v[i] = raw.v[src];
+    }
+    const ext = arr => {
+      let mx = -Infinity, mn = Infinity, xm = 0, xn = 0;
+      arr.forEach((val, i) => { if (val > mx) { mx = val; xm = x[i]; } if (val < mn) { mn = val; xn = x[i]; } });
+      return { max: mx, xMax: xm, min: mn, xMin: xn };
+    };
+    return { rev: true, raw, x, N, V, M, v, stats: { N: ext(N), V: ext(V), M: ext(M), v: ext(v) } };
   }
 
   function findNode(doc, x, y) {
@@ -61,10 +91,13 @@
 
   function splitMember(doc, k, s, nn) {
     const m = doc.members[k], L = mGeom(doc, m).L;
-    const m2 = { i: nn, j: m.j, E: m.E, A: m.A, I: m.I, truss: m.truss, hingeStart: false, hingeEnd: m.hingeEnd, loads: [] };
+    const m2 = { i: nn, j: m.j, E: m.E, A: m.A, I: m.I, alpha: m.alpha ?? 1.2e-5, truss: m.truss, hingeStart: false, hingeEnd: m.hingeEnd, loads: [] };
     const old = m.loads; m.loads = []; m.j = nn; m.hingeEnd = false;
     for (const ld of old) {
-      if (ld.kind === 'point') {
+      if (ld.kind === 'thermal') {
+        m.loads.push({ ...ld });
+        m2.loads.push({ ...ld });
+      } else if (ld.kind === 'point') {
         if (ld.a <= s + EPS) m.loads.push(ld); else { ld.a -= s; m2.loads.push(ld); }
       } else {
         const a0 = ld.a ?? 0, b0 = ld.b ?? L;
@@ -93,7 +126,7 @@
   function addMember(doc, i, j, p) {
     if (i === j) return { error: 'Start and end are the same node.' };
     if (doc.members.some(m => (m.i === i && m.j === j) || (m.i === j && m.j === i))) return { error: 'There is already a member between these two nodes.' };
-    doc.members.push({ i, j, E: p.E, A: p.A, I: p.I, truss: !!p.truss, hingeStart: false, hingeEnd: false, loads: [] });
+    doc.members.push({ i, j, E: p.E, A: p.A, I: p.I, alpha: p.alpha ?? 1.2e-5, truss: !!p.truss, hingeStart: false, hingeEnd: false, loads: [] });
     return { index: doc.members.length - 1 };
   }
 
@@ -133,7 +166,7 @@
     const m = new Solver.Model();
     doc.nodes.forEach(n => m.addNode(n.x, n.y));
     doc.members.forEach(mm => {
-      const k = m.addMember(mm.i, mm.j, { E: mm.E, A: mm.A, I: mm.I, type: mm.truss ? 'truss' : 'frame', hingeStart: mm.hingeStart, hingeEnd: mm.hingeEnd });
+      const k = m.addMember(mm.i, mm.j, { E: mm.E, A: mm.A, I: mm.I, alpha: mm.alpha ?? 1.2e-5, type: mm.truss ? 'truss' : 'frame', hingeStart: mm.hingeStart, hingeEnd: mm.hingeEnd });
       for (const ld of mm.loads) m.addMemberLoad(k, ld);
     });
     for (const [n, s] of Object.entries(doc.supports)) m.setSupport(Number(n), s);
@@ -180,7 +213,7 @@
   }
 
   const api = {
-    newDoc, trig, dirVec, recalcLoad, recalcNodeLoad, mkPoint, mkDist, mkNodeLoad, mGeom, projectOnMember, findNode,
+    newDoc, trig, dirVec, recalcLoad, recalcNodeLoad, mkPoint, mkDist, mkNodeLoad, mkThermal, mGeom, projectOnMember, isMemberReversed, canonicalDiag, findNode,
     addNodeAt, splitMember, deleteNode, deleteMember, addMember, nodeHinged, setNodeHinge,
     SUPPORT_PRESETS, supportKind, buildModel, solveDoc, niceError, equilibriumCheck,
   };

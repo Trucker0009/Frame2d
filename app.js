@@ -22,13 +22,16 @@
 
   /* ---------------- state ---------------- */
   let doc = C.newDoc();
-  const S = { grid: 1, snap: true, fu: 'kN', lu: 'm', E: 2e8, A: 0.01, I: 1e-4, labels: true, react: true };
-  const opt = { memberType: 'frame', chain: true, support: 'pin', inclInput: 'angle', inclAngle: 26.565051, rise: 1, run: 2, loadType: 'point', F: 10, ang: 90, system: 'global', w1: 10, w2: 10, from: '', to: '', M: 10, nx: 0, ny: 0 };
+  const S = { grid: 1, snap: true, showDims: false, fu: 'kN', lu: 'm', E: 2e8, A: 0.01, I: 1e-4, labels: true, react: true };
+  const opt = { memberType: 'frame', chain: true, support: 'pin', inclInput: 'angle', inclAngle: 26.565051, rise: 1, run: 2, loadType: 'point', F: 10, ang: 90, system: 'global', w1: 10, w2: 10, from: '', to: '', M: 10, nx: 0, ny: 0, selectMode: 'single', dT: 30, dTg: 0, th_h: 0.3 };
   const inclAng = () => opt.inclInput === 'angle' ? +opt.inclAngle : +(Math.atan2(opt.rise, opt.run) * 180 / Math.PI).toFixed(6);   // slope surface angle from Angle or Rise / Run
   let tool = 'select', sel = null, pending = null, hover = null;
+  let multiSel = { nodes: new Set(), members: new Set() };
+  let probe = null;
   let view = { ox: 80, oy: 400, s: 50 }, viewInit = false;
   let results = null, mode = 'model', diagScale = 1, flip = false, influenceResult = null;
-  const influenceOpt = { pathMode: 'member', movingMember: 0, startNode: 0, endNode: 1, targetKind: 'reaction', reactionNode: 0, reactionComponent: 'ry', sectionMember: 0, sectionX: 3, sectionComponent: 'M', angle: 90, magnitude: 1, samples: 101, flipCurve: false };
+  const defaultInfluenceOpt = () => ({ pathMode: 'member', movingMember: 0, startNode: 0, endNode: 1, targetKind: 'reaction', reactionNode: 0, reactionComponent: 'ry', sectionMember: 0, sectionX: 3, sectionComponent: 'M', angle: 90, magnitude: 1, samples: 101, valueSpacing: '', flipCurve: false });
+  let influenceOpt = defaultInfluenceOpt();
   let influenceOptionsOpen = true;
   let undoStack = [], redoStack = [];
   let panelOpen = window.innerWidth > 900, detailsOpen = false, spaceDown = false;
@@ -41,13 +44,14 @@
   let sectionAssignments = {};
 
   const HINTS = {
-    select: 'Tap a node or member to edit it. Drag a node to move it. Drag empty space to pan; pinch or mouse wheel to zoom.',
+    select: 'Tap a node or member to inspect or edit. Drag a node to move it.',
+    multiselect: 'Drag a selection box on the canvas to multi-select nodes and members for Copy, Move, or Mirror.',
     node: 'Tap the canvas to add a node (snaps to the grid), or type X, Y and press Add. A node placed on a member splits it.',
     member: 'Tap the start point, then the end point (nodes or empty grid points).',
     support: 'Pick a support type, then tap a node.',
     load: 'Pick a load type, set the values, then tap a node or a member.',
+    influence: 'Calculate an influence line for a moving point load.',
     delete: 'Tap a node (its members go too) or a member to delete it.',
-    influence: 'Calculate an influence line for a unit point load moving along one member.',
   };
 
   /* ---------------- persistence ---------------- */
@@ -55,13 +59,13 @@
     const o = C.newDoc();
     if (!d || typeof d !== 'object') return o;
     o.nodes = (d.nodes || []).map(n => ({ x: +n.x, y: +n.y }));
-    o.members = (d.members || []).map(m => ({ i: m.i, j: m.j, E: m.E, A: m.A, I: m.I, truss: !!m.truss, hingeStart: !!m.hingeStart, hingeEnd: !!m.hingeEnd, loads: m.loads || [] }))
+    o.members = (d.members || []).map(m => ({ i: m.i, j: m.j, E: m.E, A: m.A, I: m.I, alpha: m.alpha ?? 1.2e-5, truss: !!m.truss, hingeStart: !!m.hingeStart, hingeEnd: !!m.hingeEnd, loads: m.loads || [] }))
       .filter(m => o.nodes[m.i] && o.nodes[m.j]);
     o.supports = d.supports || {};
     o.nodeLoads = (d.nodeLoads || []).filter(l => o.nodes[l.node]);
     return o;
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify({ doc, S, view, sections: sectionLibrary, assignments: sectionAssignments })); } catch (e) { /* ignore */ } }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify({ doc, S, view, sections: sectionLibrary, assignments: sectionAssignments, influenceOpt })); } catch (e) { /* ignore */ } }
   function updateProjName() {
     const elName = $('projNameText');
     if (elName) elName.textContent = structureName || 'Untitled structure';
@@ -121,6 +125,7 @@
         doc = normalizeDoc(o.doc); Object.assign(S, o.S || {});
         sectionLibrary = Array.isArray(o.sections) ? o.sections : [];
         sectionAssignments = o.assignments && typeof o.assignments === 'object' ? o.assignments : {};
+        if (o.influenceOpt && typeof o.influenceOpt === 'object') Object.assign(influenceOpt, o.influenceOpt);
         if (o.view && isFinite(o.view.s)) { view = o.view; viewInit = true; }
       }
     } catch (e) { /* ignore */ }
@@ -163,6 +168,7 @@
   function afterChange() {
     results = null; mode = 'model';
     influenceResult = null;
+    clearProbe();
     if (sel && ((sel.t === 'node' && !doc.nodes[sel.id]) || (sel.t === 'member' && !doc.members[sel.id]))) sel = null;
     save(); refreshButtons(); refreshPanel(); draw();
   }
@@ -327,11 +333,15 @@
     if (results && mode === 'defl') note = drawDeflected();
     else if (results && (mode === 'N' || mode === 'V' || mode === 'M')) note = drawDiagram(mode);
     drawMembers();
+    if (S.showDims) drawDimensionLines();
     if (influenceResult) note = drawInfluence();
     if (mode === 'model' || !results) drawLoads();
     drawSupports();
     drawNodes();
     if (results && S.react) drawReactions();
+    if (probe && results && mode !== 'model') drawValueProbe();
+    if (g && g.kind === 'boxselect') drawBoxSelectRect(g.sx, g.sy, g.curX, g.curY);
+    if (transformAction) drawTransformPreview();
     drawCursor();
     if (note) { cx.font = '13px system-ui, sans-serif'; cx.textAlign = 'left'; cx.textBaseline = 'top'; cx.fillStyle = theme === 'dark' ? '#93c5fd' : '#1f3a5f'; cx.fillText(note, 10, 8); }
   }
@@ -369,13 +379,17 @@
     doc.members.forEach((m, k) => {
       const a = nodeScr(m.i), b = nodeScr(m.j), L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, u = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
       if (sel && sel.t === 'member' && sel.id === k) { cx.strokeStyle = 'rgba(239,68,68,.35)'; cx.lineWidth = 10; line(a, b); }
+      if (multiSel.members.has(k)) { cx.strokeStyle = 'rgba(56,189,248,.4)'; cx.lineWidth = 10; line(a, b); }
       cx.strokeStyle = light ? '#94a3b8' : (m.truss ? (theme === 'dark' ? '#fb923c' : '#9a3412') : (theme === 'dark' ? '#60a5fa' : '#1f3a5f')); cx.lineWidth = m.truss ? 2.5 : 3.5; line(a, b);
       if (L > 30) {
         cx.lineWidth = 1.5; cx.strokeStyle = theme === 'dark' ? '#93c5fd' : '#1f3a5f'; cx.fillStyle = theme === 'dark' ? '#253044' : '#fff';
         if (m.truss || m.hingeStart) { cx.beginPath(); cx.arc(a[0] + u[0] * 9, a[1] + u[1] * 9, 4.5, 0, 7); cx.fill(); cx.stroke(); }
         if (m.truss || m.hingeEnd) { cx.beginPath(); cx.arc(b[0] - u[0] * 9, b[1] - u[1] * 9, 4.5, 0, 7); cx.fill(); cx.stroke(); }
       }
-      if (S.labels) label('M' + (k + 1), (a[0] + b[0]) / 2 - u[1] * 12, (a[1] + b[1]) / 2 + u[0] * 12, '#64748b');
+      if (S.labels) {
+        const rev = C.isMemberReversed(doc, m), uc = rev ? [-u[0], -u[1]] : u;
+        label('M' + (k + 1), (a[0] + b[0]) / 2 - uc[1] * 12, (a[1] + b[1]) / 2 + uc[0] * 12, '#64748b');
+      }
     });
   }
 
@@ -384,7 +398,12 @@
     if (!r || !r.samples.length) return 'Influence line';
     const max = Math.max(...r.samples.map(s => Math.abs(s.value)), 1e-12), scale = Math.min(100, 70 / max);
     const base = s => memberPoint(s.member, s.a);
-    const normal = k => { const a = nodeScr(doc.members[k].i), b = nodeScr(doc.members[k].j), L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [-(b[1] - a[1]) / L, (b[0] - a[0]) / L]; };
+    const normal = k => {
+      const m = doc.members[k], rev = C.isMemberReversed(doc, m);
+      const a = nodeScr(rev ? m.j : m.i), b = nodeScr(rev ? m.i : m.j);
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      return [-(b[1] - a[1]) / L, (b[0] - a[0]) / L];
+    };
     const point = s => { const p = base(s), nv = normal(s.member), sign = influenceOpt.flipCurve ? -1 : 1; return [p[0] + nv[0] * s.value * scale * sign, p[1] + nv[1] * s.value * scale * sign]; };
     cx.save(); cx.strokeStyle = '#16a34a'; cx.fillStyle = '#16a34a'; cx.lineWidth = 2; cx.lineJoin = 'round';
     cx.beginPath(); r.samples.forEach((s, i) => { const p = point(s); if (i) cx.lineTo(p[0], p[1]); else cx.moveTo(p[0], p[1]); }); cx.stroke();
@@ -392,15 +411,54 @@
     r.path.segments.forEach(s => line(memberPoint(s.member, s.reverse ? s.length : 0), memberPoint(s.member, s.reverse ? 0 : s.length))); cx.setLineDash([]);
     const first = r.samples[0], last = r.samples[r.samples.length - 1];
     const projection = s => line(base(s), point(s));
-    const stationStep = Math.max(1, Math.floor((r.samples.length - 1) / 10));
-    cx.strokeStyle = 'rgba(22,163,74,.45)'; cx.lineWidth = 1;
-    for (let i = 0; i < r.samples.length; i += stationStep) {
-      for (const j of [Math.max(0, i - 1), i, Math.min(r.samples.length - 1, i + 1)]) projection(r.samples[j]);
-    }
     cx.strokeStyle = '#16a34a'; cx.lineWidth = 2;
     projection(first); projection(last);
     const showValue = s => { const p = point(s), nv = normal(s.member), sign = influenceOpt.flipCurve ? -1 : 1; label(fmt(s.value), p[0] + nv[0] * 14 * sign, p[1] + nv[1] * 14 * sign, '#15803d'); };
-    for (let pct = 0; pct <= 100; pct += 10) showValue(r.samples[Math.round((r.samples.length - 1) * pct / 100)]);
+
+    const sp = parseFloat(influenceOpt.valueSpacing);
+    if (isFinite(sp) && sp > 0) {
+      const total = r.path.total;
+      const stations = [];
+      for (let s = 0; s < total - 1e-5; s += sp) stations.push(s);
+      stations.push(total);
+
+      stations.forEach(sDist => {
+        let si = 0;
+        while (si < r.path.segments.length - 1 && sDist > r.path.segments[si].start + r.path.segments[si].length) si++;
+        const seg = r.path.segments[si];
+        const local = Math.max(0, Math.min(seg.length, sDist - seg.start));
+        const a = seg.reverse ? seg.length - local : local;
+
+        let val = 0;
+        const pts = r.samples.filter(p => !p.jumpSide);
+        if (pts.length > 0) {
+          if (sDist <= pts[0].x) val = pts[0].value;
+          else if (sDist >= pts[pts.length - 1].x) val = pts[pts.length - 1].value;
+          else {
+            let idx = 1;
+            while (idx < pts.length && pts[idx].x < sDist) idx++;
+            const p0 = pts[idx - 1], p1 = pts[idx];
+            const t = (p1.x - p0.x) > 1e-9 ? (sDist - p0.x) / (p1.x - p0.x) : 0;
+            val = p0.value + t * (p1.value - p0.value);
+          }
+        }
+        const sObj = { member: seg.member, a, value: val };
+        cx.strokeStyle = 'rgba(22,163,74,.45)'; cx.lineWidth = 1;
+        projection(sObj);
+        showValue(sObj);
+      });
+    } else {
+      [0, 20, 40, 60, 80, 100].forEach(pct => {
+        const idx = Math.min(r.samples.length - 1, Math.max(0, Math.round((r.samples.length - 1) * pct / 100)));
+        const s = r.samples[idx];
+        if (s) {
+          cx.strokeStyle = 'rgba(22,163,74,.45)'; cx.lineWidth = 1;
+          projection(s);
+          showValue(s);
+        }
+      });
+    }
+
     r.jumps.forEach(j => {
       const before = point(j.before), after = point(j.after), nv = normal(j.before.member), m = doc.members[j.before.member], a = nodeScr(m.i), b = nodeScr(m.j), L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, tx = (b[0] - a[0]) / L, ty = (b[1] - a[1]) / L, sign = influenceOpt.flipCurve ? -1 : 1;
       label(fmt(j.before.value), before[0] - tx * 18 + nv[0] * 14 * sign, before[1] - ty * 18 + nv[1] * 14 * sign, '#15803d', 'right');
@@ -417,6 +475,20 @@
       const [px, py] = toScr(n.x, n.y);
       const isSel = sel && sel.t === 'node' && sel.id === i;
       if (isSel) { cx.fillStyle = 'rgba(239,68,68,.3)'; cx.beginPath(); cx.arc(px, py, 11, 0, 7); cx.fill(); }
+      if (multiSel.nodes.has(i)) { cx.fillStyle = 'rgba(56,189,248,.4)'; cx.beginPath(); cx.arc(px, py, 11, 0, 7); cx.fill(); }
+      if (g && g.kind === 'dragnode' && g.node === i) {
+        cx.strokeStyle = '#f59e0b'; cx.lineWidth = 3; cx.beginPath(); cx.arc(px, py, 14, 0, 7); cx.stroke();
+        cx.fillStyle = 'rgba(245, 158, 11, 0.25)'; cx.beginPath(); cx.arc(px, py, 14, 0, 7); cx.fill();
+        cx.beginPath();
+        cx.moveTo(px - 18, py); cx.lineTo(px + 18, py);
+        cx.moveTo(px, py - 18); cx.lineTo(px, py + 18);
+        cx.stroke();
+      }
+      if (g && g.candidateNode === i && !g.moved && g.holdTimer) {
+        cx.strokeStyle = '#38bdf8'; cx.lineWidth = 2; cx.setLineDash([3, 3]);
+        cx.beginPath(); cx.arc(px, py, 13, 0, 7); cx.stroke();
+        cx.setLineDash([]);
+      }
       cx.fillStyle = theme === 'dark' ? '#e5e7eb' : '#111827'; cx.beginPath(); cx.arc(px, py, 3.8, 0, 7); cx.fill();
       if (S.labels) label('N' + (i + 1), px + 12, py - 11, theme === 'dark' ? '#cbd5e1' : '#0f172a', 'left');
     });
@@ -484,7 +556,24 @@
     doc.members.forEach((m, k) => {
       const g = C.mGeom(doc, m);
       for (const ld of m.loads) {
-        if (ld.kind === 'point') {
+        if (ld.kind === 'thermal') {
+          const midP = memberPoint(k, g.L / 2);
+          const thTxt = 'ΔT=' + (ld.dT >= 0 ? '+' : '') + fmt(ld.dT) + '°C' + (ld.dTg ? ' (grad ' + fmt(ld.dTg) + '°)' : '');
+          const thCol = ld.dT >= 0 ? '#ea580c' : '#0284c7';
+          cx.save();
+          cx.font = '600 11px system-ui, sans-serif';
+          const tw = cx.measureText(thTxt).width;
+          cx.fillStyle = theme === 'dark' ? 'rgba(30, 41, 59, 0.88)' : 'rgba(255, 255, 255, 0.92)';
+          cx.strokeStyle = thCol; cx.lineWidth = 1.3;
+          const px = midP[0], py = midP[1] - 16;
+          cx.beginPath();
+          cx.roundRect ? cx.roundRect(px - tw / 2 - 6, py - 9, tw + 12, 18, 5) : cx.rect(px - tw / 2 - 6, py - 9, tw + 12, 18);
+          cx.fill(); cx.stroke();
+          cx.fillStyle = thCol;
+          cx.textAlign = 'center'; cx.textBaseline = 'middle';
+          cx.fillText(thTxt, px, py);
+          cx.restore();
+        } else if (ld.kind === 'point') {
           const [wx, wy] = memberWorldVec(k, ld, ld.fx, ld.fy), d = scrDir(wx, wy); if (!d) continue;
           const p = memberPoint(k, ld.a), tx = p[0] - d[0] * 4, ty = p[1] - d[1] * 4;
           arrow(tx, ty, d[0], d[1], 44, col); label(fmt(ld.F) + ' ' + S.fu, tx - d[0] * 58, ty - d[1] * 58, col);
@@ -582,7 +671,7 @@
 
   function drawDiagram(T) {
     let mx = 0;
-    results.diag.forEach(d => d[T].forEach(v => { mx = Math.max(mx, Math.abs(v)); }));
+    doc.members.forEach((m, k) => { const cd = C.canonicalDiag(doc, m, results.diag[k]); if (cd) cd[T].forEach(v => { mx = Math.max(mx, Math.abs(v)); }); });
     const names = { N: 'Axial force N (' + S.fu + '), tension +', V: 'Shear force V (' + S.fu + ')', M: 'Bending moment M (' + S.fu + '·' + S.lu + '), drawn on the tension side' };
     if (mx < 1e-12) return names[T] + ' — all zero';
     const colr = { N: [22, 163, 74], V: [147, 51, 234], M: [37, 99, 235] }[T];
@@ -593,9 +682,11 @@
 
     const k0 = 70 * diagScale / mx, sign = (T === 'M' ? -1 : 1) * (flip ? -1 : 1);
     doc.members.forEach((m, k) => {
-      const d = results.diag[k], g = C.mGeom(doc, m), P0 = nodeScr(m.i), P1 = nodeScr(m.j);
-      const Lpx = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]) || 1, u = [(P1[0] - P0[0]) / Lpx, (P1[1] - P0[1]) / Lpx], nv = [-g.s, -g.c];
-      const arr = d[T], pt = i => { const al = d.x[i] / g.L * Lpx, off = sign * k0 * arr[i]; return [P0[0] + u[0] * al + nv[0] * off, P0[1] + u[1] * al + nv[1] * off, off]; };
+      const cd = C.canonicalDiag(doc, m, results.diag[k]); if (!cd) return;
+      const g = C.mGeom(doc, m), rev = cd.rev, P0 = nodeScr(rev ? m.j : m.i), P1 = nodeScr(rev ? m.i : m.j);
+      const Lpx = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]) || 1, u = [(P1[0] - P0[0]) / Lpx, (P1[1] - P0[1]) / Lpx];
+      const gc = rev ? -g.c : g.c, gs = rev ? -g.s : g.s, nv = [-gs, -gc];
+      const arr = cd[T], pt = i => { const al = cd.x[i] / g.L * Lpx, off = sign * k0 * arr[i]; return [P0[0] + u[0] * al + nv[0] * off, P0[1] + u[1] * al + nv[1] * off, off]; };
       cx.beginPath(); cx.moveTo(P0[0], P0[1]);
       for (let i = 0; i < arr.length; i++) { const p = pt(i); cx.lineTo(p[0], p[1]); }
       cx.lineTo(P1[0], P1[1]); cx.closePath();
@@ -606,7 +697,7 @@
       const shown = [];
       for (const i of [...cand].sort((a, b) => a - b)) {
         if (Math.abs(arr[i]) < 1e-3 * mx) continue;
-        if (shown.some(j => Math.abs(d.x[j] - d.x[i]) < 0.04 * g.L)) continue;
+        if (shown.some(j => Math.abs(cd.x[j] - cd.x[i]) < 0.04 * g.L)) continue;
         shown.push(i);
         const p = pt(i), side = p[2] >= 0 ? 1 : -1;
         let lx = p[0] + nv[0] * side * 11;
@@ -614,14 +705,38 @@
 
         // If at support node and reactions are on, nudge inward along member axis to prevent collision
         if (S.react && results) {
-          if (i === 0 && doc.supports[m.i]) {
+          const startNode = rev ? m.j : m.i, endNode = rev ? m.i : m.j;
+          if (i === 0 && doc.supports[startNode]) {
             lx += u[0] * 20; ly += u[1] * 20;
-          } else if (i === arr.length - 1 && doc.supports[m.j]) {
+          } else if (i === arr.length - 1 && doc.supports[endNode]) {
             lx -= u[0] * 20; ly -= u[1] * 20;
           }
         }
 
-        drawDiagramText(fmt(arr[i]), lx, ly, diagTextColor);
+        let col = diagTextColor;
+        if (T === 'M') {
+          if (i === imax && arr[imax] > 1e-3 * mx) col = isDark ? '#34d399' : '#059669';
+          else if (i === imin && arr[imin] < -1e-3 * mx) col = isDark ? '#fbbf24' : '#d97706';
+        }
+        drawDiagramText(fmt(arr[i]), lx, ly, col);
+      }
+
+      // Automatically detect and mark inflection points (M = 0)
+      if (T === 'M') {
+        for (let i = 0; i < arr.length - 1; i++) {
+          const v1 = arr[i], v2 = arr[i + 1];
+          if ((v1 > 1e-4 && v2 < -1e-4) || (v1 < -1e-4 && v2 > 1e-4)) {
+            const frac = Math.abs(v1) / (Math.abs(v1) + Math.abs(v2));
+            const xZero = cd.x[i] + frac * (cd.x[i + 1] - cd.x[i]);
+            const alZero = (xZero / g.L) * Lpx;
+            const pZero = [P0[0] + u[0] * alZero, P0[1] + u[1] * alZero];
+            cx.save();
+            cx.fillStyle = isDark ? '#38bdf8' : '#0284c7';
+            cx.beginPath(); cx.arc(pZero[0], pZero[1], 3.2, 0, 7); cx.fill();
+            drawDiagramText('0', pZero[0] + nv[0] * 10, pZero[1] + nv[1] * 10, isDark ? '#38bdf8' : '#0284c7');
+            cx.restore();
+          }
+        }
       }
     });
     return names[T];
@@ -652,11 +767,641 @@
         label('L = ' + fmt(Math.hypot(hover.p.x - pending.x, hover.p.y - pending.y)) + ' ' + S.lu, px - dy / lp * 16, py + dx / lp * 16, '#15803d');
       }
     }
-    if (hover && (tool === 'node' || tool === 'member' || tool === 'select')) {
+    if (hover && (tool === 'node' || tool === 'member' || tool === 'select' || tool === 'multiselect')) {
       const [px, py] = toScr(hover.p.x, hover.p.y);
       cx.strokeStyle = hover.p.node != null ? '#16a34a' : '#2563eb'; cx.lineWidth = 1.5;
       cx.beginPath(); cx.arc(px, py, hover.p.node != null ? 9 : 5, 0, 7); cx.stroke();
     }
+  }
+
+  function drawDimensionLines() {
+    if (!doc.members.length) return;
+    const isDark = theme === 'dark';
+    const dimCol = isDark ? '#38bdf8' : '#0284c7';
+    const bgCol = isDark ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.92)';
+
+    cx.save();
+    doc.members.forEach((m, k) => {
+      const g = C.mGeom(doc, m), rev = C.isMemberReversed(doc, m);
+      const P0 = nodeScr(rev ? m.j : m.i), P1 = nodeScr(rev ? m.i : m.j);
+      const Lpx = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]);
+      if (Lpx < 32) return;
+
+      const u = [(P1[0] - P0[0]) / Lpx, (P1[1] - P0[1]) / Lpx];
+      const nv = [-u[1], u[0]];
+      const offset = 22;
+
+      const D0 = [P0[0] + nv[0] * offset, P0[1] + nv[1] * offset];
+      const D1 = [P1[0] + nv[0] * offset, P1[1] + nv[1] * offset];
+
+      // Witness extension lines
+      cx.strokeStyle = isDark ? 'rgba(56, 189, 248, 0.45)' : 'rgba(2, 132, 199, 0.45)';
+      cx.lineWidth = 1;
+      cx.beginPath();
+      cx.moveTo(P0[0] + nv[0] * 3, P0[1] + nv[1] * 3);
+      cx.lineTo(P0[0] + nv[0] * (offset + 4), P0[1] + nv[1] * (offset + 4));
+      cx.moveTo(P1[0] + nv[0] * 3, P1[1] + nv[1] * 3);
+      cx.lineTo(P1[0] + nv[0] * (offset + 4), P1[1] + nv[1] * (offset + 4));
+      cx.stroke();
+
+      // Dimension line
+      cx.strokeStyle = dimCol;
+      cx.lineWidth = 1.2;
+      cx.beginPath();
+      cx.moveTo(D0[0], D0[1]);
+      cx.lineTo(D1[0], D1[1]);
+      cx.stroke();
+
+      // Architectural ticks (45-deg slash)
+      const tick = 4;
+      const tvec = [(u[0] + nv[0]) * tick, (u[1] + nv[1]) * tick];
+      cx.beginPath();
+      cx.moveTo(D0[0] - tvec[0], D0[1] - tvec[1]);
+      cx.lineTo(D0[0] + tvec[0], D0[1] + tvec[1]);
+      cx.moveTo(D1[0] - tvec[0], D1[1] - tvec[1]);
+      cx.lineTo(D1[0] + tvec[0], D1[1] + tvec[1]);
+      cx.stroke();
+
+      // Text badge
+      const mid = [(D0[0] + D1[0]) / 2, (D0[1] + D1[1]) / 2];
+      const txt = fmt(g.L) + ' ' + S.lu;
+      cx.font = '600 10.5px system-ui, -apple-system, sans-serif';
+      const tw = cx.measureText(txt).width;
+
+      cx.fillStyle = bgCol;
+      cx.beginPath();
+      cx.roundRect ? cx.roundRect(mid[0] - tw / 2 - 4, mid[1] - 8, tw + 8, 16, 4) : cx.rect(mid[0] - tw / 2 - 4, mid[1] - 8, tw + 8, 16);
+      cx.fill();
+
+      cx.fillStyle = dimCol;
+      cx.textAlign = 'center';
+      cx.textBaseline = 'middle';
+      cx.fillText(txt, mid[0], mid[1]);
+    });
+    cx.restore();
+  }
+
+  function drawValueProbe() {
+    if (!probe || !results || mode === 'model') return;
+    const mem = doc.members[probe.member];
+    if (!mem || !results.diag[probe.member]) return;
+    const d = results.diag[probe.member];
+    const g = C.mGeom(doc, mem), cd = C.canonicalDiag(doc, mem, results.diag[probe.member]);
+    if (!cd) return;
+    const rev = cd.rev;
+    const P0 = nodeScr(rev ? mem.j : mem.i), P1 = nodeScr(rev ? mem.i : mem.j);
+    const Lpx = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]) || 1;
+    const u = [(P1[0] - P0[0]) / Lpx, (P1[1] - P0[1]) / Lpx];
+    const gc = rev ? -g.c : g.c, gs = rev ? -g.s : g.s, nv = [-gs, -gc];
+
+    const al = clamp(probe.x / g.L, 0, 1) * Lpx;
+    const P_mem = [P0[0] + u[0] * al, P0[1] + u[1] * al];
+
+    cx.save();
+    if (mode === 'defl') {
+      cx.fillStyle = '#dc2626';
+      cx.beginPath(); cx.arc(P_mem[0], P_mem[1], 5, 0, 7); cx.fill();
+    } else {
+      let mx = 0;
+      doc.members.forEach((mItem, idx) => { const itemDiag = C.canonicalDiag(doc, mItem, results.diag[idx]); if (itemDiag) itemDiag[mode].forEach(v => { mx = Math.max(mx, Math.abs(v)); }); });
+      if (mx > 1e-12) {
+        const k0 = 70 * diagScale / mx, sign = (mode === 'M' ? -1 : 1) * (flip ? -1 : 1);
+        const off = sign * k0 * probe.val;
+        const P_diag = [P_mem[0] + nv[0] * off, P_mem[1] + nv[1] * off];
+
+        cx.strokeStyle = '#38bdf8';
+        cx.lineWidth = 1.5;
+        cx.setLineDash([3, 3]);
+        cx.beginPath();
+        cx.moveTo(P_mem[0], P_mem[1]);
+        cx.lineTo(P_diag[0], P_diag[1]);
+        cx.stroke();
+        cx.setLineDash([]);
+
+        cx.fillStyle = '#38bdf8';
+        cx.beginPath(); cx.arc(P_mem[0], P_mem[1], 4, 0, 7); cx.fill();
+
+        cx.fillStyle = '#f59e0b';
+        cx.beginPath(); cx.arc(P_diag[0], P_diag[1], 5.5, 0, 7); cx.fill();
+        cx.strokeStyle = '#fff'; cx.lineWidth = 1.5; cx.stroke();
+      }
+    }
+    cx.restore();
+  }
+
+  function drawBoxSelectRect(x0, y0, x1, y1) {
+    const minX = Math.min(x0, x1), maxX = Math.max(x0, x1);
+    const minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+    const w = maxX - minX, h = maxY - minY;
+    cx.save();
+    cx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+    cx.strokeStyle = '#38bdf8';
+    cx.lineWidth = 1.5;
+    cx.setLineDash([5, 4]);
+    cx.fillRect(minX, minY, w, h);
+    cx.strokeRect(minX, minY, w, h);
+    cx.restore();
+  }
+
+  function setProbe(k, x) {
+    const mem = doc.members[k];
+    if (!mem || !results || !results.diag[k]) return;
+    const g = C.mGeom(doc, mem);
+    const clampedX = clamp(x, 0, g.L);
+    const d = C.canonicalDiag(doc, mem, results.diag[k]);
+    if (!d) return;
+    let val = 0;
+    const T = mode === 'defl' ? 'v' : mode;
+    const arr = d[T];
+    if (arr && arr.length) {
+      let idx = 0;
+      for (let i = 0; i < d.x.length; i++) {
+        if (d.x[i] >= clampedX) { idx = i; break; }
+        idx = i;
+      }
+      if (idx === 0) val = arr[0];
+      else {
+        const x0 = d.x[idx - 1], x1 = d.x[idx];
+        const v0 = arr[idx - 1], v1 = arr[idx];
+        const t = (x1 - x0) > 1e-9 ? (clampedX - x0) / (x1 - x0) : 0;
+        val = v0 + (v1 - v0) * t;
+      }
+    }
+    probe = { member: k, x: clampedX, val, type: mode, L: g.L };
+    updateProbeHud();
+    draw();
+  }
+
+  function updateProbeHud() {
+    const hud = $('diagramProbeHud');
+    if (!hud) return;
+    if (!probe || !results || mode === 'model') {
+      hud.classList.add('hidden');
+      return;
+    }
+    hud.classList.remove('hidden');
+    $('probeMember').textContent = 'Member M' + (probe.member + 1);
+    const pct = probe.L > 0 ? (probe.x / probe.L * 100).toFixed(1) : '0';
+    $('probeRatio').textContent = 'x/L = ' + pct + '%';
+    const unitMap = { M: S.fu + '·' + S.lu, V: S.fu, N: S.fu, defl: S.lu };
+    $('probeValType').textContent = probe.type === 'defl' ? 'Deflection' : probe.type;
+    $('probeValNum').textContent = (probe.val >= 0 ? '+' : '') + fmt(probe.val);
+    $('probeValUnit').textContent = unitMap[probe.type] || '';
+    $('probeDist').textContent = fmt(probe.x);
+    $('probeDistUnit').textContent = S.lu;
+    const slider = $('probeSlider');
+    if (slider) slider.value = pct;
+  }
+
+  function clearProbe() {
+    probe = null;
+    updateProbeHud();
+    draw();
+  }
+
+  function clearMultiSelect() {
+    multiSel.nodes.clear();
+    multiSel.members.clear();
+    updateMultiSelectBar();
+    draw();
+  }
+
+  let transformAction = null;
+
+  function updateMultiSelectBar() {
+    const bar = $('multiSelectBar');
+    if (!bar) return;
+    if (tool !== 'multiselect' && !transformAction) { bar.classList.add('hidden'); return; }
+    if (transformAction) {
+      bar.classList.remove('hidden');
+      const countEl = $('multiCount');
+      if (countEl) {
+        const actionName = transformAction.mode === 'copy' ? 'Copy' : (transformAction.mode === 'move' ? 'Move' : 'Mirror');
+        countEl.textContent = transformAction.step === 'base'
+          ? '📍 Select base point'
+          : `🎯 Click target grid point to ${actionName.toLowerCase()}`;
+      }
+      ['bMultiSection', 'bMultiCopy', 'bMultiMove', 'bMultiMirror', 'bMultiDelete'].forEach(id => {
+        const btn = $(id); if (btn) btn.style.display = 'none';
+      });
+      const clr = $('bMultiClear');
+      if (clr) {
+        clr.textContent = 'Cancel';
+        clr.style.width = 'auto';
+        clr.style.padding = '0 12px';
+      }
+      return;
+    }
+
+    ['bMultiSection', 'bMultiCopy', 'bMultiMove', 'bMultiMirror', 'bMultiDelete'].forEach(id => {
+      const btn = $(id); if (btn) btn.style.display = '';
+    });
+    const clr = $('bMultiClear');
+    if (clr) {
+      clr.textContent = '✕';
+      clr.style.width = '';
+      clr.style.padding = '';
+    }
+
+    const n = multiSel.nodes.size;
+    const m = multiSel.members.size;
+    const count = n + m;
+    if (count > 0 && tool === 'multiselect') {
+      bar.classList.remove('hidden');
+      const countEl = $('multiCount');
+      if (countEl) {
+        if (n > 0 && m > 0) {
+          countEl.textContent = `${n}N · ${m}M`;
+        } else if (n > 0) {
+          countEl.textContent = `${n} ${n === 1 ? 'node' : 'nodes'}`;
+        } else {
+          countEl.textContent = `${m} ${m === 1 ? 'member' : 'members'}`;
+        }
+        countEl.title = `${n} node${n !== 1 ? 's' : ''}, ${m} member${m !== 1 ? 's' : ''} selected`;
+      }
+    } else {
+      bar.classList.add('hidden');
+    }
+  }
+
+  function openMultiAssignSection() {
+    if (!multiSel.members.size) { msg('Please select at least one member to assign a section.', true); return; }
+    const count = multiSel.members.size, first = doc.members[[...multiSel.members][0]];
+    const secSelect = el('select', { class: 'm3-input' }, [
+      el('option', { value: '' }, 'Custom manual values (E, A, I)'),
+      ...sectionLibrary.map(s => el('option', { value: s.id }, s.name))
+    ]);
+    const eInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(first ? first.E : S.E) });
+    const aInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(first ? first.A : S.A) });
+    const iInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(first ? first.I : S.I) });
+    const alphaInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(first && first.alpha != null ? first.alpha : 1.2e-5) });
+    secSelect.addEventListener('change', () => {
+      const s = sectionLibrary.find(x => x.id === secSelect.value);
+      if (s) { eInput.value = numStr(s.E); aInput.value = numStr(s.A); iInput.value = numStr(s.I); alphaInput.value = numStr(s.alpha ?? 1.2e-5); }
+    });
+    const card = el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, 'Assign Section (' + count + ' members)'),
+      el('p', { class: 'm3-dialog-message' }, 'Apply a saved section or manual properties to the selected members.'),
+      el('div', { class: 'm3-form-grid' },
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'Section Profile'), secSelect),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'E'), eInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'A'), aInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'I'), iInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'Thermal Coef. alpha (/C)'), alphaInput)
+      ),
+      el('div', { class: 'm3-dialog-actions' },
+        el('button', { class: 'm3-btn-text', onclick: closeDialog }, 'Cancel'),
+        el('button', { class: 'm3-btn-filled', onclick: () => {
+          const E = parseFloat(eInput.value), A = parseFloat(aInput.value), I = parseFloat(iInput.value);
+          const av = parseFloat(alphaInput.value), alpha = isFinite(av) && av >= 0 ? av : 1.2e-5;
+          if (!(E > 0) || !(A > 0) || !(I > 0)) { msg('Please enter valid, positive values for E, A, and I.', true); return; }
+          const chosen = secSelect.value;
+          edit(() => multiSel.members.forEach(k => {
+            const m = doc.members[k]; if (!m) return;
+            m.E = E; m.A = A; m.I = I; m.alpha = alpha;
+            if (chosen) sectionAssignments[k] = chosen; else delete sectionAssignments[k];
+          }));
+          closeDialog(); msg('Assigned section properties to ' + count + ' member' + (count === 1 ? '' : 's') + '.');
+        }}, 'Assign Section')
+      )
+    );
+    showDialog(card);
+  }
+
+  function startTransformAction(mode) {
+    if (!multiSel.nodes.size && !multiSel.members.size) {
+      if (sel) {
+        if (sel.t === 'node') multiSel.nodes.add(sel.id);
+        else if (sel.t === 'member') multiSel.members.add(sel.id);
+        updateMultiSelectBar();
+      } else {
+        msg('Select elements first.', true);
+        return;
+      }
+    }
+    transformAction = {
+      mode,
+      step: 'base',
+      basePoint: null,
+      nodes: new Set(multiSel.nodes),
+      members: new Set(multiSel.members)
+    };
+    transformAction.members.forEach(k => {
+      const m = doc.members[k];
+      if (m) {
+        transformAction.nodes.add(m.i);
+        transformAction.nodes.add(m.j);
+      }
+    });
+    updateMultiSelectBar();
+    msg('📍 Select base point (click a point in the structure or grid)...');
+    draw();
+  }
+
+  function cancelTransformAction() {
+    transformAction = null;
+    updateMultiSelectBar();
+    draw();
+  }
+
+  function executeMultiCopy(ox, oy) {
+    edit(() => {
+      const nodeMap = new Map();
+      const newNodes = new Set(), newMembers = new Set();
+      const nodesToCopy = transformAction ? transformAction.nodes : multiSel.nodes;
+      const membersToCopy = transformAction ? transformAction.members : multiSel.members;
+      nodesToCopy.forEach(n => {
+        const orig = doc.nodes[n];
+        if (!orig) return;
+        const newIdx = C.addNodeAt(doc, +(orig.x + ox).toFixed(4), +(orig.y + oy).toFixed(4));
+        nodeMap.set(n, newIdx);
+        newNodes.add(newIdx);
+        if (doc.supports[n]) doc.supports[newIdx] = clone(doc.supports[n]);
+      });
+      membersToCopy.forEach(k => {
+        const orig = doc.members[k];
+        if (!orig) return;
+        let i2 = nodeMap.get(orig.i), j2 = nodeMap.get(orig.j);
+        if (i2 === undefined) {
+          const nd = doc.nodes[orig.i];
+          i2 = C.addNodeAt(doc, +(nd.x + ox).toFixed(4), +(nd.y + oy).toFixed(4));
+          nodeMap.set(orig.i, i2);
+          newNodes.add(i2);
+        }
+        if (j2 === undefined) {
+          const nd = doc.nodes[orig.j];
+          j2 = C.addNodeAt(doc, +(nd.x + ox).toFixed(4), +(nd.y + oy).toFixed(4));
+          nodeMap.set(orig.j, j2);
+          newNodes.add(j2);
+        }
+        const res = C.addMember(doc, i2, j2, { E: orig.E, A: orig.A, I: orig.I, alpha: orig.alpha, truss: orig.truss });
+        if (!res.error) {
+          const newM = doc.members[res.index];
+          newM.hingeStart = orig.hingeStart;
+          newM.hingeEnd = orig.hingeEnd;
+          newM.loads = clone(orig.loads || []);
+          newMembers.add(res.index);
+          if (sectionAssignments[k]) sectionAssignments[res.index] = sectionAssignments[k];
+        }
+      });
+      multiSel.nodes = newNodes;
+      multiSel.members = newMembers;
+    });
+    updateMultiSelectBar();
+    msg('Copied elements by ΔX=' + fmt(ox) + ', ΔY=' + fmt(oy) + ' ' + S.lu);
+  }
+
+  function executeMultiMove(ox, oy) {
+    edit(() => {
+      const allNodesToMove = new Set(transformAction ? transformAction.nodes : multiSel.nodes);
+      const membersToMove = transformAction ? transformAction.members : multiSel.members;
+      membersToMove.forEach(k => {
+        const m = doc.members[k];
+        if (m) { allNodesToMove.add(m.i); allNodesToMove.add(m.j); }
+      });
+      allNodesToMove.forEach(n => {
+        if (doc.nodes[n]) {
+          doc.nodes[n].x = +(doc.nodes[n].x + ox).toFixed(4);
+          doc.nodes[n].y = +(doc.nodes[n].y + oy).toFixed(4);
+        }
+      });
+    });
+    updateMultiSelectBar();
+    draw();
+    msg('Moved elements by ΔX=' + fmt(ox) + ', ΔY=' + fmt(oy) + ' ' + S.lu);
+  }
+
+  function multiCopy() {
+    startTransformAction('copy');
+  }
+
+  function multiMove() {
+    startTransformAction('move');
+  }
+
+  function drawTransformPreview() {
+    if (!transformAction) return;
+    cx.save();
+    if (transformAction.basePoint) {
+      const [bx, by] = toScr(transformAction.basePoint.x, transformAction.basePoint.y);
+      cx.strokeStyle = '#f59e0b';
+      cx.fillStyle = 'rgba(245, 158, 11, 0.25)';
+      cx.lineWidth = 2;
+      cx.beginPath(); cx.arc(bx, by, 7, 0, 7); cx.fill(); cx.stroke();
+      cx.beginPath();
+      cx.moveTo(bx - 12, by); cx.lineTo(bx + 12, by);
+      cx.moveTo(bx, by - 12); cx.lineTo(bx, by + 12);
+      cx.stroke();
+      label(transformAction.mode === 'mirror' ? 'Mirror point' : 'Base', bx, by - 14, '#f59e0b', 'center');
+
+      if (transformAction.mode === 'mirror') {
+        cx.strokeStyle = 'rgba(245, 158, 11, 0.5)'; cx.lineWidth = 1.3; cx.setLineDash([4, 4]);
+        cx.beginPath(); cx.moveTo(bx, 0); cx.lineTo(bx, H); cx.moveTo(0, by); cx.lineTo(W, by); cx.stroke(); cx.setLineDash([]);
+      } else if (hover && hover.p) {
+        const [tx, ty] = toScr(hover.p.x, hover.p.y);
+        const ox = hover.p.x - transformAction.basePoint.x;
+        const oy = hover.p.y - transformAction.basePoint.y;
+
+        // Rubber-band dashed line
+        cx.strokeStyle = '#38bdf8';
+        cx.lineWidth = 1.5;
+        cx.setLineDash([4, 4]);
+        cx.beginPath(); cx.moveTo(bx, by); cx.lineTo(tx, ty); cx.stroke();
+        cx.setLineDash([]);
+
+        // Displacement label
+        const midPx = (bx + tx) / 2, midPy = (by + ty) / 2;
+        label('ΔX=' + (ox >= 0 ? '+' : '') + fmt(ox) + ', ΔY=' + (oy >= 0 ? '+' : '') + fmt(oy), midPx, midPy - 12, '#38bdf8', 'center');
+
+        // Target point indicator
+        cx.strokeStyle = '#38bdf8';
+        cx.lineWidth = 2;
+        cx.beginPath(); cx.arc(tx, ty, 6, 0, 7); cx.stroke();
+
+        // Ghost members
+        cx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+        cx.lineWidth = 3;
+        cx.setLineDash([6, 4]);
+        transformAction.members.forEach(k => {
+          const m = doc.members[k]; if (!m) return;
+          const ni = doc.nodes[m.i], nj = doc.nodes[m.j]; if (!ni || !nj) return;
+          const p1 = toScr(ni.x + ox, ni.y + oy);
+          const p2 = toScr(nj.x + ox, nj.y + oy);
+          line(p1, p2);
+        });
+        cx.setLineDash([]);
+
+        // Ghost nodes
+        cx.fillStyle = '#38bdf8';
+        transformAction.nodes.forEach(n => {
+          const nd = doc.nodes[n]; if (!nd) return;
+          const p = toScr(nd.x + ox, nd.y + oy);
+          cx.beginPath(); cx.arc(p[0], p[1], 5, 0, 7); cx.fill();
+        });
+      }
+    } else if (hover && hover.p) {
+      const [hx, hy] = toScr(hover.p.x, hover.p.y);
+      cx.strokeStyle = '#f59e0b';
+      cx.lineWidth = 1.5;
+      cx.setLineDash([3, 3]);
+      cx.beginPath(); cx.arc(hx, hy, 9, 0, 7); cx.stroke();
+      cx.setLineDash([]);
+    }
+    cx.restore();
+  }
+
+  function multiMirror() {
+    if (!multiSel.nodes.size && !multiSel.members.size) {
+      if (sel) {
+        if (sel.t === 'node') multiSel.nodes.add(sel.id);
+        else if (sel.t === 'member') multiSel.members.add(sel.id);
+        updateMultiSelectBar();
+      } else {
+        msg('Select elements first.', true);
+        return;
+      }
+    }
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    const selNodes = new Set(multiSel.nodes);
+    multiSel.members.forEach(k => { const m = doc.members[k]; if (m) { selNodes.add(m.i); selNodes.add(m.j); } });
+    if (selNodes.size === 0) return;
+    selNodes.forEach(n => {
+      const nd = doc.nodes[n];
+      if (nd) {
+        if (nd.x > maxX) maxX = nd.x;
+        if (nd.y > maxY) maxY = nd.y;
+        if (nd.x < minX) minX = nd.x;
+        if (nd.y < minY) minY = nd.y;
+      }
+    });
+    const furthestX = isFinite(maxX) ? +maxX.toFixed(4) : 0;
+    const furthestY = isFinite(maxY) ? +maxY.toFixed(4) : 0;
+
+    const axisSelect = el('select', {},
+      el('option', { value: 'vert' }, 'Vertical Axis'),
+      el('option', { value: 'horiz' }, 'Horizontal Axis')
+    );
+    const posLabel = el('span', {}, 'Position (' + S.lu + ')');
+    const coordInput = el('input', { type: 'number', step: 'any', class: 'num', value: String(furthestX) });
+    axisSelect.addEventListener('change', () => {
+      coordInput.value = axisSelect.value === 'vert' ? String(furthestX) : String(furthestY);
+    });
+    const keepOrigCheck = el('input', { type: 'checkbox' }); keepOrigCheck.checked = true;
+
+    const card = el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, 'Mirror Selected Elements'),
+      el('p', { class: 'm3-dialog-message' }, 'Mirror elements across an axis of symmetry:'),
+      el('div', { class: 'row' }, el('label', { class: 'fld' }, 'Axis', axisSelect), el('label', { class: 'fld' }, posLabel, coordInput)),
+      el('div', { class: 'row' }, el('label', { class: 'fld' }, keepOrigCheck, 'Keep original elements (Duplicate)')),
+      el('div', { class: 'm3-dialog-actions' },
+        el('button', { class: 'm3-btn-text', onclick: closeDialog }, 'Cancel'),
+        el('button', { class: 'm3-btn-filled', onclick: () => {
+          const isVert = axisSelect.value === 'vert';
+          const posVal = parseFloat(coordInput.value);
+          const pos = isFinite(posVal) ? posVal : (isVert ? furthestX : furthestY);
+          const duplicate = keepOrigCheck.checked;
+          closeDialog();
+          edit(() => {
+            const nodeMap = new Map();
+            const newNodes = new Set(), newMembers = new Set();
+            selNodes.forEach(n => {
+              const orig = doc.nodes[n]; if (!orig) return;
+              const nx = isVert ? +(2 * pos - orig.x).toFixed(4) : orig.x;
+              const ny = !isVert ? +(2 * pos - orig.y).toFixed(4) : orig.y;
+              if (duplicate) {
+                const newIdx = C.addNodeAt(doc, nx, ny);
+                nodeMap.set(n, newIdx);
+                newNodes.add(newIdx);
+                if (doc.supports[n]) doc.supports[newIdx] = clone(doc.supports[n]);
+              } else {
+                orig.x = nx; orig.y = ny;
+              }
+            });
+            if (duplicate) {
+              multiSel.members.forEach(k => {
+                const orig = doc.members[k]; if (!orig) return;
+                const i2 = nodeMap.get(orig.i), j2 = nodeMap.get(orig.j);
+                if (i2 !== undefined && j2 !== undefined) {
+                  const res = C.addMember(doc, i2, j2, { E: orig.E, A: orig.A, I: orig.I, alpha: orig.alpha, truss: orig.truss });
+                  if (!res.error) {
+                    const newM = doc.members[res.index];
+                    newM.hingeStart = orig.hingeStart; newM.hingeEnd = orig.hingeEnd;
+                    newM.loads = clone(orig.loads || []);
+                    newMembers.add(res.index);
+                    if (sectionAssignments[k]) sectionAssignments[res.index] = sectionAssignments[k];
+                  }
+                }
+              });
+              multiSel.nodes = newNodes;
+              multiSel.members = newMembers;
+            }
+          });
+          updateMultiSelectBar();
+          msg('Mirrored selected elements.');
+        } }, 'Mirror')
+      )
+    );
+    showDialog(card);
+  }
+
+  function multiMirror() { startTransformAction('mirror'); }
+
+  function askMirrorAxis(pt) {
+    const px = pt.x, py = pt.y;
+    const axis = el('select', {}, el('option', { value: 'vert' }, 'Vertical axis (x = ' + fmt(px) + ')'), el('option', { value: 'horiz' }, 'Horizontal axis (y = ' + fmt(py) + ')'));
+    const keep = el('input', { type: 'checkbox' }); keep.checked = true;
+    showDialog(el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, 'Mirror selected elements'),
+      el('p', { class: 'm3-dialog-message' }, 'Choose the reflection axis through the selected point.'),
+      el('label', { class: 'fld' }, 'Axis', axis),
+      el('label', { class: 'fld' }, keep, 'Keep original elements (duplicate)'),
+      el('div', { class: 'm3-dialog-actions' },
+        el('button', { class: 'm3-btn-text', onclick: () => { closeDialog(); cancelTransformAction(); } }, 'Cancel'),
+        el('button', { class: 'm3-btn-filled', onclick: () => { const vert = axis.value === 'vert', duplicate = keep.checked; closeDialog(); executeMirrorAt(px, py, vert, duplicate); cancelTransformAction(); } }, 'Mirror')
+      )
+    ));
+  }
+
+  function executeMirrorAt(px, py, isVert, duplicate) {
+    const nodes = new Set(transformAction ? transformAction.nodes : multiSel.nodes), members = new Set(transformAction ? transformAction.members : multiSel.members);
+    members.forEach(k => { const m = doc.members[k]; if (m) { nodes.add(m.i); nodes.add(m.j); } });
+    edit(() => {
+      const map = new Map(), newNodes = new Set(), newMembers = new Set();
+      nodes.forEach(n => {
+        const old = doc.nodes[n]; if (!old) return;
+        const nx = isVert ? +(2 * px - old.x).toFixed(4) : old.x, ny = isVert ? old.y : +(2 * py - old.y).toFixed(4);
+        if (duplicate) {
+          const ni = C.addNodeAt(doc, nx, ny); map.set(n, ni); newNodes.add(ni);
+          if (doc.supports[n]) { const s = clone(doc.supports[n]); if (typeof s.ang === 'number') s.ang = +((isVert ? 180 - s.ang : -s.ang + 360) % 360).toFixed(4); doc.supports[ni] = s; }
+        } else {
+          old.x = nx; old.y = ny;
+          if (doc.supports[n] && typeof doc.supports[n].ang === 'number') doc.supports[n].ang = +((isVert ? 180 - doc.supports[n].ang : -doc.supports[n].ang + 360) % 360).toFixed(4);
+        }
+      });
+      if (duplicate) members.forEach(k => {
+        const old = doc.members[k]; if (!old) return;
+        const i2 = map.get(old.i), j2 = map.get(old.j); if (i2 === undefined || j2 === undefined) return;
+        const res = C.addMember(doc, i2, j2, { E: old.E, A: old.A, I: old.I, alpha: old.alpha, truss: old.truss });
+        if (res.error) return;
+        const nm = doc.members[res.index]; nm.hingeStart = old.hingeStart; nm.hingeEnd = old.hingeEnd;
+        nm.loads = clone(old.loads || []).map(ld => { const x = clone(ld); if (typeof x.ang === 'number') { x.ang = +((isVert ? 180 - x.ang : -x.ang + 360) % 360).toFixed(4); C.recalcLoad(x); } return x; });
+        newMembers.add(res.index); if (sectionAssignments[k]) sectionAssignments[res.index] = sectionAssignments[k];
+      });
+      if (duplicate) { multiSel.nodes = newNodes; multiSel.members = newMembers; }
+    });
+    updateMultiSelectBar(); draw(); msg('Mirrored selected elements.');
+  }
+
+  function multiDelete() {
+    if (!multiSel.nodes.size && !multiSel.members.size) return;
+    edit(() => {
+      const mems = [...multiSel.members].sort((a, b) => b - a);
+      mems.forEach(k => { C.deleteMember(doc, k); });
+      const nodes = [...multiSel.nodes].sort((a, b) => b - a);
+      nodes.forEach(n => { C.deleteNode(doc, n); });
+    });
+    clearMultiSelect();
+    msg('Deleted selected elements.');
   }
 
   /* ---------------- pointer input ---------------- */
@@ -671,6 +1416,7 @@
     try { cv.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ }
     ptrs.set(e.pointerId, { x: sx, y: sy });
     if (ptrs.size === 2) {
+      if (g && g.holdTimer) { clearTimeout(g.holdTimer); g.holdTimer = null; }
       const [a, b] = [...ptrs.values()];
       g = { kind: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, c0: [(a.x + b.x) / 2, (a.y + b.y) / 2], v0: { ...view } };
       return;
@@ -679,10 +1425,29 @@
     e.preventDefault();
     if (e.button === 1 || e.button === 2 || spaceDown) { g = { kind: 'pan', sx, sy, ox: view.ox, oy: view.oy }; return; }
     g = { kind: 'tool', sx, sy, ox: view.ox, oy: view.oy, moved: false, type: e.pointerType || 'mouse' };
-    if (e.pointerType !== 'mouse') updateHover(sx, sy, e.pointerType);
-    if (tool === 'select') {
+    if (e.pointerType !== 'mouse' || transformAction) updateHover(sx, sy, e.pointerType || 'mouse');
+    if (tool === 'select' && !multiSel.nodes.size && !multiSel.members.size && !transformAction) {
       const n = hitNode(sx, sy, tolFor(g.type));
-      if (n >= 0) { g.kind = 'dragnode'; g.node = n; g.before = snapDoc(); g.dragged = false; select({ t: 'node', id: n }); }
+      if (n >= 0) {
+        g.candidateNode = n;
+        g.nodeDragReady = false;
+        g.holdTimer = setTimeout(() => {
+          if (g && g.candidateNode === n && !g.moved) {
+            g.nodeDragReady = true;
+            g.kind = 'dragnode';
+            g.node = n;
+            g.before = snapDoc();
+            g.dragged = false;
+            select({ t: 'node', id: n });
+            try { navigator.vibrate?.(40); } catch (_) {}
+            msg('📍 Node N' + (n + 1) + ' unlocked — drag to reposition');
+            draw();
+          }
+        }, 500);
+      }
+    } else if (tool === 'multiselect' && !transformAction) {
+      g = { kind: 'boxselect', sx, sy, curX: sx, curY: sy };
+      return;
     }
   });
   cv.addEventListener('pointermove', e => {
@@ -696,13 +1461,23 @@
       }
       return;
     }
-    if (!g) { if (e.pointerType === 'mouse') updateHover(sx, sy, 'mouse'); return; }
+    if (g && g.kind === 'boxselect') {
+      g.curX = sx; g.curY = sy;
+      draw();
+      return;
+    }
+    if (!g) { if (e.pointerType === 'mouse' || transformAction) updateHover(sx, sy, e.pointerType || 'mouse'); return; }
     const dist = Math.hypot(sx - g.sx, sy - g.sy), thr = g.type === 'mouse' ? 5 : 9;
+    if (g.holdTimer && dist > thr) {
+      clearTimeout(g.holdTimer);
+      g.holdTimer = null;
+      g.candidateNode = null;
+    }
     if (g.kind === 'pan') { view.ox = g.ox + sx - g.sx; view.oy = g.oy + sy - g.sy; draw(); }
     else if (g.kind === 'tool') {
       if (!g.moved && dist > thr) g.moved = true;
       if (g.moved) { view.ox = g.ox + sx - g.sx; view.oy = g.oy + sy - g.sy; draw(); }
-      else if (e.pointerType === 'mouse' || tool === 'member') updateHover(sx, sy, e.pointerType || 'mouse');
+      else if (e.pointerType === 'mouse' || tool === 'member' || transformAction) updateHover(sx, sy, e.pointerType || 'mouse');
     } else if (g.kind === 'dragnode') {
       if (!g.dragged && dist > thr) g.dragged = true;
       if (g.dragged) { const p = snapAt(sx, sy, 0); doc.nodes[g.node].x = p.x; doc.nodes[g.node].y = p.y; results = null; mode = 'model'; setCoord(p); draw(); }
@@ -710,8 +1485,35 @@
   });
   function endPointer(e, cancel) {
     ptrs.delete(e.pointerId);
+    if (g && g.holdTimer) { clearTimeout(g.holdTimer); g.holdTimer = null; }
     if (!g) return;
     if (g.kind === 'pinch') { if (ptrs.size === 0) g = null; return; }
+    if (g.kind === 'boxselect') {
+      const x0 = Math.min(g.sx, g.curX), x1 = Math.max(g.sx, g.curX);
+      const y0 = Math.min(g.sy, g.curY), y1 = Math.max(g.sy, g.curY);
+      if (Math.hypot(g.curX - g.sx, g.curY - g.sy) > 6) {
+        doc.nodes.forEach((n, idx) => {
+          const [px, py] = toScr(n.x, n.y);
+          if (px >= x0 && px <= x1 && py >= y0 && py <= y1) multiSel.nodes.add(idx);
+        });
+        doc.members.forEach((m, idx) => {
+          const p1 = nodeScr(m.i), p2 = nodeScr(m.j);
+          const mx = (p1[0] + p2[0]) / 2, my = (p1[1] + p2[1]) / 2;
+          const inside = (v, a, b) => v >= a && v <= b;
+          if ((inside(p1[0], x0, x1) && inside(p1[1], y0, y1)) ||
+              (inside(p2[0], x0, x1) && inside(p2[1], y0, y1)) ||
+              (inside(mx, x0, x1) && inside(my, y0, y1))) {
+            multiSel.members.add(idx);
+          }
+        });
+        updateMultiSelectBar();
+      } else if (!cancel) {
+        handleClick(g.sx, g.sy, g.type);
+      }
+      draw();
+      g = null;
+      return;
+    }
     if (g.kind === 'tool' && !g.moved && !cancel) handleClick(g.sx, g.sy, g.type);
     if (g.kind === 'dragnode' && g.dragged) {
       if (cancel) { doc = JSON.parse(g.before); afterChange(); }
@@ -737,12 +1539,66 @@
 
   function handleClick(sx, sy, type) {
     const tol = tolFor(type);
+    if (transformAction) {
+      const p = snapAt(sx, sy, tol);
+      if (transformAction.step === 'base') {
+        if (transformAction.mode === 'mirror') {
+          transformAction.basePoint = { x: p.x, y: p.y };
+          askMirrorAxis(p);
+          return;
+        }
+        transformAction.basePoint = { x: p.x, y: p.y };
+        transformAction.step = 'target';
+        msg('🎯 ' + (transformAction.mode === 'copy' ? 'Copy' : 'Move') + ': Click target grid point or node in structure...');
+        updateMultiSelectBar();
+        draw();
+        return;
+      } else if (transformAction.step === 'target') {
+        const ox = +(p.x - transformAction.basePoint.x).toFixed(4);
+        const oy = +(p.y - transformAction.basePoint.y).toFixed(4);
+        if (ox === 0 && oy === 0) {
+          msg('Destination point is identical to base point.');
+          cancelTransformAction();
+          return;
+        }
+        if (transformAction.mode === 'copy') {
+          executeMultiCopy(ox, oy);
+        } else if (transformAction.mode === 'move') {
+          executeMultiMove(ox, oy);
+        }
+        cancelTransformAction();
+        return;
+      }
+    }
+    if (results && (mode === 'M' || mode === 'V' || mode === 'N' || mode === 'defl')) {
+      const k = hitMember(sx, sy, 22);
+      if (k >= 0) {
+        const [wx, wy] = toWld(sx, sy);
+        const pr = C.projectOnMember(doc, k, wx, wy);
+        const rev = C.isMemberReversed(doc, doc.members[k]);
+        setProbe(k, rev ? C.mGeom(doc, doc.members[k]).L - pr.t : pr.t);
+        return;
+      }
+    }
     if (tool === 'select') {
       const n = hitNode(sx, sy, tol);
       if (n >= 0) return select({ t: 'node', id: n });
       const k = hitMember(sx, sy, tol);
       if (k >= 0) return select({ t: 'member', id: k });
       sel = null; refreshPanel(); draw(); return;
+    }
+    if (tool === 'multiselect') {
+      const n = hitNode(sx, sy, tol), k = hitMember(sx, sy, tol);
+      if (k >= 0 && n >= 0) {
+        const [px, py] = toScr(doc.nodes[n].x, doc.nodes[n].y);
+        const dn = Math.hypot(px - sx, py - sy), dk = distSeg(sx, sy, nodeScr(doc.members[k].i), nodeScr(doc.members[k].j));
+        if (dk <= dn) { if (multiSel.members.has(k)) multiSel.members.delete(k); else multiSel.members.add(k); }
+        else { if (multiSel.nodes.has(n)) multiSel.nodes.delete(n); else multiSel.nodes.add(n); }
+        updateMultiSelectBar(); draw(); return;
+      }
+      if (k >= 0) { if (multiSel.members.has(k)) multiSel.members.delete(k); else multiSel.members.add(k); updateMultiSelectBar(); draw(); return; }
+      if (n >= 0) { if (multiSel.nodes.has(n)) multiSel.nodes.delete(n); else multiSel.nodes.add(n); updateMultiSelectBar(); draw(); return; }
+      return;
     }
     if (tool === 'node') {
       const p = snapAt(sx, sy, tol);
@@ -785,6 +1641,13 @@
 
   function loadClick(sx, sy, tol) {
     const lt = opt.loadType;
+    if (lt === 'thermal') {
+      const k = hitMember(sx, sy, tol);
+      if (k < 0) { msg('Tap a member to apply a thermal load.', true); return; }
+      edit(() => { doc.members[k].loads.push(C.mkThermal(opt.dT, opt.dTg, opt.th_h)); });
+      msg('Thermal load added on M' + (k + 1) + '.');
+      return;
+    }
     if (lt === 'moment') {
       const n = hitNode(sx, sy, tol);
       if (n >= 0) {
@@ -900,14 +1763,15 @@
   function refreshOptions() {
     const o = $('opts'); o.replaceChildren();
     const card = $('optsCard');
-    if (tool === 'select' || tool === 'delete') {
+    const titleMap = { node: 'Node Settings', member: 'Member Settings', support: 'Support Presets', load: 'Load Settings', influence: 'Influence Line Setup' };
+    const titleEl = $('optsTitle');
+    if (titleEl) titleEl.textContent = titleMap[tool] || 'Tool Options';
+
+    if (tool === 'select' || tool === 'multiselect' || tool === 'delete') {
       if (card) card.classList.add('opts-hidden');
       return;
     }
     if (card) card.classList.remove('opts-hidden');
-    const titleMap = { node: 'Node Settings', member: 'Member Settings', support: 'Support Presets', load: 'Load Settings', influence: 'Influence Line Setup' };
-    const titleEl = $('optsTitle');
-    if (titleEl) titleEl.textContent = titleMap[tool] || 'Tool Options';
 
     if (tool === 'node') {
       o.append(fnum('X', () => opt.nx, v => { opt.nx = v; }), fnum('Y', () => opt.ny, v => { opt.ny = v; }),
@@ -933,6 +1797,7 @@
         fnum('Load angle (deg)', () => influenceOpt.angle, v => { influenceOpt.angle = v; }),
         fnum('Load magnitude', () => influenceOpt.magnitude, v => { influenceOpt.magnitude = v; }),
         fnum('Load positions', () => influenceOpt.samples, v => { influenceOpt.samples = v; }),
+        fopt('Values every (' + S.lu + ')', () => influenceOpt.valueSpacing, v => { influenceOpt.valueSpacing = v; draw(); }),
         seg([['reaction', 'Reaction'], ['section', 'Section N/V/M']], influenceOpt.targetKind, v => { influenceOpt.targetKind = v; refreshOptions(); }),
         chk('Flip curve', () => influenceOpt.flipCurve, v => { influenceOpt.flipCurve = v; draw(); })
       );
@@ -945,7 +1810,7 @@
           seg([['N', 'N'], ['V', 'V'], ['M', 'M']], influenceOpt.sectionComponent, v => { influenceOpt.sectionComponent = v; refreshOptions(); }));
       }
       o.append(el('button', { class: 'primary', onclick: calculateInfluence }, 'Calculate influence line'),
-        el('small', { class: 'muted' }, 'Load positions = number of solves/points along the path. More points make a smoother curve but take longer. Angle 90° means downward. Existing model loads are ignored.'));
+        el('small', { class: 'muted' }, 'Load positions = number of calculation samples controlling curve smoothness. Values every = spacing along path for ordinate values (blank for 0%, 20%, 40%, 60%, 80%, 100%). Angle 90° means downward. Existing model loads are ignored.'));
     } else if (tool === 'support') {
       o.append(seg([['pin', 'Pin'], ['roller', 'Roller'], ['rollerV', 'Roller ↕'], ['incl', 'Roller ∠'], ['fixed', 'Fixed'], ['none', 'None']], opt.support, v => { opt.support = v; refreshOptions(); }),
         ...(opt.support === 'incl' ? [
@@ -963,18 +1828,25 @@
         ] : []),
         el('small', { class: 'muted' }, 'Roller slides horizontally (restrains Y). Roller ↕ slides vertically (restrains X). Roller ∠ = roller on a sloping surface. Enter its surface angle, or use Rise and Run (a 1:2 slope = Rise 1, Run 2). Springs / settlement: select the node and open "Custom".'));
     } else if (tool === 'load') {
-      o.append(seg([['point', 'Point'], ['dist', 'Distributed'], ['moment', 'Moment']], opt.loadType, v => { opt.loadType = v; refreshOptions(); }));
+      o.append(seg([['point', 'Point'], ['dist', 'Distributed'], ['moment', 'Moment'], ['thermal', 'Thermal']], opt.loadType, v => { opt.loadType = v; refreshOptions(); }));
       if (opt.loadType === 'point') o.append(fnum('F (' + S.fu + ')', () => opt.F, v => { opt.F = v; }), fnum('Angle °', () => opt.ang, v => { opt.ang = v; }), sysSeg());
       if (opt.loadType === 'dist') o.append(fnum('w1', () => opt.w1, v => { opt.w1 = v; }), fnum('w2', () => opt.w2, v => { opt.w2 = v; }), fnum('Angle °', () => opt.ang, v => { opt.ang = v; }),
         fopt('From', () => opt.from, v => { opt.from = v; }), fopt('To', () => opt.to, v => { opt.to = v; }), sysSeg());
       if (opt.loadType === 'moment') o.append(fnum('M (' + S.fu + '·' + S.lu + ')', () => opt.M, v => { opt.M = v; }));
-      o.append(el('small', { class: 'muted' }, opt.loadType === 'moment' ? 'Tap a node or any location along a member to place a moment. Counter-clockwise is positive.' :
+      if (opt.loadType === 'thermal') o.append(
+        fnum('Delta T uniform (°C)', () => opt.dT, v => { opt.dT = v; }),
+        fnum('Delta Tg gradient (°C)', () => opt.dTg, v => { opt.dTg = v; }),
+        fnum('Section depth h (' + S.lu + ')', () => opt.th_h, v => { opt.th_h = v; })
+      );
+      o.append(el('small', { class: 'muted' },
+        opt.loadType === 'moment' ? 'Tap a node or any location along a member to place a moment. Counter-clockwise is positive.' :
+        opt.loadType === 'thermal' ? 'Tap a member to apply temperature changes. Uniform Delta T causes axial strain; Delta Tg across depth h causes bending curvature.' :
         'Angle = direction the arrow comes FROM: 90° pushes down, 180° pushes right, 270° pushes up, 0° pushes left. Distributed w is per unit member length (w1 at From, w2 at To; blank = whole member). Local angles are measured from the member axis.'));
     }
   }
   function sysSeg() { return seg([['global', 'Global'], ['local', 'Local']], opt.system, v => { opt.system = v; refreshOptions(); }); }
 
-  function setTool(t) { if (t !== 'influence') influenceResult = null; tool = t; pending = null; refreshOptions(); refreshButtons(); msg(HINTS[t]); draw(); }
+  function setTool(t) { if (transformAction) cancelTransformAction(); if (t !== 'influence') influenceResult = null; tool = t; pending = null; refreshOptions(); refreshButtons(); msg(HINTS[t]); draw(); }
 
   function refreshButtons() {
     document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
@@ -982,6 +1854,7 @@
     $('bUndo').disabled = !undoStack.length; $('bRedo').disabled = !redoStack.length;
     $('dscale').disabled = !results || mode === 'model'; $('flip').disabled = !results || mode === 'model' || mode === 'defl';
     const snapBtn = $('bSnapToggle'); if (snapBtn) snapBtn.classList.toggle('active', !!S.snap);
+    const dimsBtn = $('bDimsToggle'); if (dimsBtn) dimsBtn.classList.toggle('active', !!S.showDims);
   }
 
   /* ---------------- panel ---------------- */
@@ -1065,29 +1938,49 @@
     const assigned = sectionLibrary.find(sec => sec.id === sectionAssignments[k]);
     const sectionSelect = el('select', {}, [el('option', { value: '' }, sectionLibrary.length ? 'Manual values' : 'No sections created'), ...sectionLibrary.map(sec => el('option', { value: sec.id }, sec.name))]);
     sectionSelect.value = assigned ? assigned.id : '';
-    sectionSelect.disabled = !sectionLibrary.length;
     sectionSelect.addEventListener('change', () => {
       const id = sectionSelect.value, sec = sectionLibrary.find(x => x.id === id);
       if (!sec) { delete sectionAssignments[k]; refreshPanel(); return; }
-      edit(() => { m.E = sec.E; m.A = sec.A; m.I = sec.I; sectionAssignments[k] = id; });
+      edit(() => {
+        m.E = sec.E;
+        m.A = sec.A;
+        m.I = sec.I;
+        if (sec.alpha != null) m.alpha = sec.alpha;
+        sectionAssignments[k] = id;
+      });
+      refreshPanel();
     });
     s.append(row(el('b', {}, 'Section'), sectionSelect), row(el('button', { onclick: openSections }, 'Create / manage sections')));
     const memberProps = row(pnum('E', m.E, v => { delete sectionAssignments[k]; m.E = v; }), pnum('A', m.A, v => { delete sectionAssignments[k]; m.A = v; }), pnum('I', m.I, v => { delete sectionAssignments[k]; m.I = v; }));
     memberProps.classList.add('member-props'); s.append(memberProps);
+    s.append(row(
+      pnum('Thermal alpha (/°C)', m.alpha != null ? m.alpha : 1.2e-5, v => { delete sectionAssignments[k]; m.alpha = v; }),
+      el('button', { onclick: () => edit(() => { delete sectionAssignments[k]; m.alpha = 1.2e-5; refreshPanel(); }) }, 'Steel (1.2e-5)'),
+      el('button', { onclick: () => edit(() => { delete sectionAssignments[k]; m.alpha = 1.0e-5; refreshPanel(); }) }, 'Concrete (1.0e-5)')
+    ));
     s.append(row(pchk('Hinge at start', m.hingeStart, v => { m.hingeStart = v; }, m.truss), pchk('Hinge at end', m.hingeEnd, v => { m.hingeEnd = v; }, m.truss)));
-    s.append(el('button', { onclick: () => edit(() => { doc.members.forEach(o => { o.E = m.E; o.A = m.A; o.I = m.I; }); }) }, 'Copy E, A, I to all members'));
+    s.append(el('button', { onclick: () => edit(() => { doc.members.forEach(o => { o.E = m.E; o.A = m.A; o.I = m.I; o.alpha = m.alpha; }); }) }, 'Copy E, A, I, alpha to all members'));
     s = psec(P); s.append(el('b', {}, 'Loads on this member'));
     m.loads.forEach((ld, li) => {
+      const del = el('button', { class: 'danger', onclick: () => edit(() => { m.loads.splice(li, 1); }) }, '✕');
+      if (ld.kind === 'thermal') {
+        s.append(el('div', { class: 'loadrow' },
+          el('div', {}, 'Thermal load'),
+          row(pnum('ΔT (°C)', ld.dT, v => { ld.dT = v; }), pnum('ΔTg (°C)', ld.dTg, v => { ld.dTg = v; }), pnum('Depth h (' + lu + ')', ld.h, v => { ld.h = v; })),
+          row(del)
+        ));
+        return;
+      }
       const common = [pnum('Angle °', ld.ang, v => { ld.ang = v; C.recalcLoad(ld); })];
       const sy = el('select', {}, el('option', { value: 'global' }, 'Global'), el('option', { value: 'local' }, 'Local')); sy.value = ld.system || 'global';
       sy.addEventListener('change', () => edit(() => { ld.system = sy.value; }));
-      const del = el('button', { class: 'danger', onclick: () => edit(() => { m.loads.splice(li, 1); }) }, '✕');
       if (ld.kind === 'point') s.append(el('div', { class: 'loadrow' }, el('div', {}, 'Point load'), row(pnum('F', ld.F, v => { ld.F = v; C.recalcLoad(ld); }), ...common, pnum('a (' + lu + ')', ld.a, v => { ld.a = v; })), row(sy, del)));
       else s.append(el('div', { class: 'loadrow' }, el('div', {}, 'Distributed load'), row(pnum('w1', ld.w1, v => { ld.w1 = v; C.recalcLoad(ld); }), pnum('w2', ld.w2, v => { ld.w2 = v; C.recalcLoad(ld); }), ...common),
         row(pnum('From', ld.a ?? 0, v => { ld.a = v; }), pnum('To', ld.b, v => { ld.b = v; }, true)), row(sy, del)));
     });
     s.append(row(el('button', { onclick: () => edit(() => { m.loads.push(C.mkPoint(+(g.L / 2).toFixed(3), 10, 90, 'global')); }) }, '+ Point'),
       el('button', { onclick: () => edit(() => { m.loads.push(C.mkDist(0, null, 10, 10, 90, 'global')); }) }, '+ Distributed'),
+      el('button', { onclick: () => edit(() => { m.loads.push(C.mkThermal(20, 0, 0.3)); }) }, '+ Thermal'),
       el('button', { onclick: () => {
         edit(() => {
           const a = doc.nodes[m.i], geom = C.mGeom(doc, m);
@@ -1269,7 +2162,7 @@
   }
 
   function performProjectWrite(projects, name) {
-    projects[name] = { doc: clone(doc), S: clone(S), view: clone(view), sections: clone(sectionLibrary), assignments: clone(sectionAssignments), savedAt: new Date().toISOString() };
+    projects[name] = { doc: clone(doc), S: clone(S), view: clone(view), sections: clone(sectionLibrary), assignments: clone(sectionAssignments), influenceOpt: clone(influenceOpt), savedAt: new Date().toISOString() };
     if (!writeProjects(projects)) { msg('Could not save. Storage may be full.', true); return; }
     structureName = name;
     saveName();
@@ -1282,6 +2175,8 @@
     structureName = name; saveName(); Object.assign(S, p.S || {});
     sectionLibrary = Array.isArray(p.sections) ? p.sections : [];
     sectionAssignments = p.assignments && typeof p.assignments === 'object' ? p.assignments : {};
+    influenceOpt = p.influenceOpt && typeof p.influenceOpt === 'object' ? Object.assign(defaultInfluenceOpt(), p.influenceOpt) : defaultInfluenceOpt();
+    influenceResult = null;
     if (p.view && isFinite(p.view.s)) { view = p.view; viewInit = true; }
     loadDoc(normalizeDoc(p.doc), true);
     closeDialog();
@@ -1306,19 +2201,20 @@
   }
 
   function createSection() {
-    const nameInput = el('input', { type: 'text', class: 'm3-input', value: 'Rectangular section', placeholder: 'Section name' });
+    const nameInput = el('input', { type: 'text', class: 'm3-input', value: '', placeholder: 'Section name' });
     const eInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(S.E) });
     const aInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(S.A) });
     const iInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(S.I) });
-
+    const alphaInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: '0.000012' });
     const card = el('div', { class: 'm3-dialog' },
       el('h3', { class: 'm3-dialog-title' }, 'New Cross-Section Profile'),
-      el('p', { class: 'm3-dialog-message' }, 'Define reusable E, A, and I parameters for members:'),
+      el('p', { class: 'm3-dialog-message' }, 'Define reusable E, A, I, and thermal parameters for members:'),
       el('div', { class: 'm3-form-grid' },
         el('label', { class: 'm3-form-field' }, el('span', {}, 'Section Name'), nameInput),
         el('label', { class: 'm3-form-field' }, el('span', {}, 'E (Modulus of Elasticity in ' + S.fu + '/' + S.lu + '²)'), eInput),
         el('label', { class: 'm3-form-field' }, el('span', {}, 'A (Cross-Section Area in ' + S.lu + '²)'), aInput),
-        el('label', { class: 'm3-form-field' }, el('span', {}, 'I (Second Moment of Area in ' + S.lu + '⁴)'), iInput)
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'I (Second Moment of Area in ' + S.lu + '⁴)'), iInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'Thermal Coef. alpha (/C)'), alphaInput),
       ),
       el('div', { class: 'm3-dialog-actions' },
         el('button', { class: 'm3-btn-text', onclick: openSections }, 'Cancel'),
@@ -1327,15 +2223,49 @@
           const E = parseFloat(eInput.value);
           const A = parseFloat(aInput.value);
           const I = parseFloat(iInput.value);
+          const alphaVal = parseFloat(alphaInput.value);
+          const alpha = isFinite(alphaVal) && alphaVal >= 0 ? alphaVal : 1.2e-5;
           if (!name || !isFinite(E) || E <= 0 || !isFinite(A) || A <= 0 || !isFinite(I) || I <= 0) {
             msg('Please enter valid, positive values for E, A, and I.', true);
             return;
           }
-          sectionLibrary.push({ id: 'section-' + Date.now(), name, E, A, I });
+          sectionLibrary.push({ id: 'section-' + Date.now(), name, E, A, I, alpha });
           save();
           openSections();
           msg('Section "' + name + '" created.');
         }}, 'Save Section')
+      )
+    );
+    showDialog(card);
+  }
+
+  function editSection(id) {
+    const sec = sectionLibrary.find(s => s.id === id);
+    if (!sec) return;
+    const nameInput = el('input', { type: 'text', class: 'm3-input', value: sec.name, placeholder: 'Section name' });
+    const eInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(sec.E) });
+    const aInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(sec.A) });
+    const iInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: numStr(sec.I) });
+    const alphaInput = el('input', { type: 'number', step: 'any', class: 'm3-input', value: sec.alpha != null ? numStr(sec.alpha) : '0.000012' });
+    const card = el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, 'Edit Section Profile'),
+      el('div', { class: 'm3-form-grid' },
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'Section Name'), nameInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'E'), eInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'A'), aInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'I'), iInput),
+        el('label', { class: 'm3-form-field' }, el('span', {}, 'Thermal Coef. alpha (/C)'), alphaInput)
+      ),
+      el('div', { class: 'm3-dialog-actions' },
+        el('button', { class: 'm3-btn-text', onclick: openSections }, 'Cancel'),
+        el('button', { class: 'm3-btn-filled', onclick: () => {
+          const name = nameInput.value.trim(), E = parseFloat(eInput.value), A = parseFloat(aInput.value), I = parseFloat(iInput.value);
+          const av = parseFloat(alphaInput.value), alpha = isFinite(av) && av >= 0 ? av : 1.2e-5;
+          if (!name || !(E > 0) || !(A > 0) || !(I > 0)) { msg('Please enter valid, positive values for E, A, and I.', true); return; }
+          sec.name = name; sec.E = E; sec.A = A; sec.I = I; sec.alpha = alpha;
+          edit(() => doc.members.forEach((m, k) => { if (sectionAssignments[k] === sec.id) { m.E = E; m.A = A; m.I = I; m.alpha = alpha; } }));
+          save(); openSections(); refreshPanel(); draw(); msg('Section "' + name + '" updated.');
+        }}, 'Save Changes')
       )
     );
     showDialog(card);
@@ -1362,8 +2292,9 @@
 
   function openSections() {
     const rows = sectionLibrary.length ? sectionLibrary.map(s => el('div', { class: 'project-row' },
-      el('div', {}, el('b', {}, s.name), el('small', { class: 'muted' }, 'E=' + fmt(s.E) + ', A=' + fmt(s.A) + ', I=' + fmt(s.I))),
+      el('div', {}, el('b', {}, s.name), el('small', { class: 'muted' }, 'E=' + fmt(s.E) + ', A=' + fmt(s.A) + ', I=' + fmt(s.I) + (s.alpha != null ? ', alpha=' + s.alpha : ''))),
       el('div', { class: 'project-row-actions' },
+        el('button', { class: 'btn-open', onclick: () => editSection(s.id) }, 'Edit'),
         el('button', { class: 'btn-delete', onclick: () => deleteSection(s.id) }, 'Delete')
       ))) : [el('small', { class: 'muted' }, 'No sections created in this project yet.')];
     const card = el('div', { class: 'm3-dialog' },
@@ -1481,6 +2412,72 @@
     closeDrawer();
   }
 
+  function autoSaveBeforeImport(projects) {
+    if (!doc || (!doc.nodes.length && !doc.members.length)) return '';
+    let name = structureName && structureName !== 'Untitled structure' ? structureName : 'Unsaved Project';
+    let i = 1, base = name;
+    while (projects[name]) name = base + ' ' + i++;
+    projects[name] = { doc: clone(doc), S: clone(S), view: clone(view), sections: clone(sectionLibrary), assignments: clone(sectionAssignments), influenceOpt: clone(influenceOpt), savedAt: new Date().toISOString() };
+    return name;
+  }
+
+  function exportBackup() {
+    const saved = readProjects(), currentName = (structureName || 'Untitled structure').trim() || 'Untitled structure';
+    const current = { doc: clone(doc), S: clone(S), view: clone(view), sections: clone(sectionLibrary), assignments: clone(sectionAssignments), influenceOpt: clone(influenceOpt), savedAt: new Date().toISOString() };
+    const all = { ...saved, [currentName]: current };
+    const choice = (title, description, allProjects) => el('button', { class: 'm3-choice-card', onclick: () => { closeDialog(); executeExportBackup(allProjects, currentName, all); } },
+      el('div', { class: 'm3-choice-title' }, title), el('div', { class: 'm3-choice-desc' }, description));
+    showDialog(el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, 'Export Backup'),
+      el('p', { class: 'm3-dialog-message' }, 'Choose what to export:'),
+      choice('All Saved Projects (' + Object.keys(all).length + ')', 'Export the complete project library as one .s2d bundle.', true),
+      choice('Current Project Only', 'Export only "' + currentName + '" as a .s2d file.'),
+      el('div', { class: 'm3-dialog-actions' }, el('button', { class: 'm3-btn-text', onclick: closeDialog }, 'Cancel'))
+    ));
+    closeDrawer();
+  }
+
+  function executeExportBackup(allProjects, currentName, all) {
+    const data = allProjects ? JSON.stringify({ app: 'struc2d', format: 's2d_bundle', version: 1, isBundle: true, activeProjectName: currentName, projects: all, exportedAt: new Date().toISOString() }, null, 2)
+      : JSON.stringify({ app: 'struc2d', format: 's2d', version: 1, structureName: currentName, doc, S, view, sections: sectionLibrary, assignments: sectionAssignments, influenceOpt: clone(influenceOpt), exportedAt: new Date().toISOString() }, null, 2);
+    const safe = currentName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || 'structure';
+    const filename = allProjects ? 'Struc2D_All_Projects_' + new Date().toISOString().slice(0, 10) + '.s2d' : safe + '.s2d';
+    if (window.AndroidBridge && window.AndroidBridge.handleExportBackup) { window.AndroidBridge.handleExportBackup(data, filename); msg('Exporting ' + filename + '...'); return; }
+    showDialog(el('div', { class: 'm3-dialog' },
+      el('h3', { class: 'm3-dialog-title' }, 'Export Backup (' + filename + ')'),
+      el('div', { class: 'm3-dialog-actions', style: 'flex-direction:column;gap:8px;align-items:stretch;' },
+        el('button', { class: 'm3-btn-filled', onclick: () => { const blob = new Blob([data], { type: 'application/json' }), a = el('a', { href: URL.createObjectURL(blob), download: filename }); document.body.append(a); a.click(); a.remove(); closeDialog(); msg('Saved backup: ' + filename); } }, 'Save backup'),
+        el('button', { class: 'm3-btn-text', onclick: closeDialog }, 'Cancel')
+      )
+    ));
+  }
+
+  function importBackup() {
+    let inp = $('f2dFileInput');
+    if (!inp) { inp = el('input', { type: 'file', accept: '.s2d,.f2d,.json,application/json,text/plain' }); document.body.append(inp); }
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0]; if (!f) return;
+      f.text().then(t => {
+        try {
+          const o = JSON.parse(t), projects = readProjects(), previous = autoSaveBeforeImport(projects);
+          const bundle = Boolean(o.isBundle || o.format === 's2d_bundle' || o.projects);
+          if (bundle) {
+            Object.entries(o.projects || {}).forEach(([name, p]) => { if (p && (p.doc || p.nodes)) projects[name] = { doc: clone(p.doc || p), S: clone(p.S || {}), view: clone(p.view || null), sections: clone(p.sections || []), assignments: clone(p.assignments || {}), influenceOpt: clone(p.influenceOpt || defaultInfluenceOpt()), savedAt: p.savedAt || new Date().toISOString() }; });
+            const active = o.activeProjectName || Object.keys(projects)[0], p = projects[active];
+            if (p) { structureName = active; Object.assign(S, p.S || {}); sectionLibrary = Array.isArray(p.sections) ? p.sections : []; sectionAssignments = p.assignments || {}; influenceOpt = Object.assign(defaultInfluenceOpt(), p.influenceOpt || {}); if (p.view && isFinite(p.view.s)) { view = p.view; viewInit = true; } loadDoc(normalizeDoc(p.doc), true); }
+            writeProjects(projects); saveName(); closeDrawer(); closeDialog(); msg('Imported project library.' + (previous ? ' Previous project saved as "' + previous + '".' : ''));
+          } else {
+            const name = (o.structureName || f.name.replace(/\.(s2d|f2d|json)$/i, '') || 'Imported structure').trim();
+            structureName = name; Object.assign(S, o.S || {}); sectionLibrary = Array.isArray(o.sections) ? o.sections : []; sectionAssignments = o.assignments || {}; influenceOpt = Object.assign(defaultInfluenceOpt(), o.influenceOpt || {}); if (o.view && isFinite(o.view.s)) { view = o.view; viewInit = true; } loadDoc(normalizeDoc(o.doc || o), true);
+            projects[name] = { doc: clone(doc), S: clone(S), view: clone(view), sections: clone(sectionLibrary), assignments: clone(sectionAssignments), influenceOpt: clone(influenceOpt), savedAt: new Date().toISOString() }; writeProjects(projects); saveName(); closeDrawer(); closeDialog(); msg('Loaded backup: ' + name + '.');
+          }
+        } catch (e) { msg('Could not read backup file.', true); }
+      }).catch(() => msg('Could not read file.', true));
+      inp.value = '';
+    };
+    inp.click(); closeDrawer();
+  }
+
   function isDrawerOpen() { const d = $('navDrawer'); return d && d.classList.contains('open'); }
   function openDrawer() { syncDrawerSettings(); const d = $('navDrawer'), s = $('drawerScrim'); if (d) d.classList.add('open'); if (s) s.classList.add('open'); }
   function closeDrawer() { const d = $('navDrawer'), s = $('drawerScrim'); if (d) d.classList.remove('open'); if (s) s.classList.remove('open'); }
@@ -1508,11 +2505,20 @@
   function closeMenu() { closeDrawer(); closeDialog(); }
 
   /* ---------------- wiring ---------------- */
-  document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => { if (b.dataset.tool === tool && tool === 'member') { pending = null; msg('Stopped. Tap a start point.'); draw(); } else setTool(b.dataset.tool); }));
-  document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { if (!results && b.dataset.mode !== 'model') return; influenceResult = null; mode = b.dataset.mode; refreshButtons(); draw(); }));
+  document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.tool === tool) {
+      if (tool === 'member' && pending) { pending = null; msg('Stopped. Tap a start point.'); draw(); }
+      else if (tool !== 'select') setTool('select');
+    } else setTool(b.dataset.tool);
+  }));
+  document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
+    if (!results && b.dataset.mode !== 'model') return;
+    influenceResult = null; mode = b.dataset.mode;
+    if (mode === 'model' || !results) clearProbe(); else updateProbeHud();
+    refreshButtons(); draw();
+  }));
   $('bUndo').addEventListener('click', undo); $('bRedo').addEventListener('click', redo);
   $('bSolve').addEventListener('click', solve); $('bFit').addEventListener('click', fitView);
-  $('bZin').addEventListener('click', () => zoomAt(W / 2, H / 2, 1.3)); $('bZout').addEventListener('click', () => zoomAt(W / 2, H / 2, 1 / 1.3));
   $('bInfo').addEventListener('click', () => { panelOpen = !panelOpen; refreshPanel(); draw(); });
   $('bMenu').addEventListener('click', openDrawer);
   const bDrawerClose = $('bDrawerClose'); if (bDrawerClose) bDrawerClose.addEventListener('click', closeDrawer);
@@ -1542,6 +2548,40 @@
   const bOClose = $('bOptsClose'); if (bOClose) bOClose.addEventListener('click', () => setTool('select'));
   const bDiagToggle = $('bDiagSettingsToggle'); if (bDiagToggle) bDiagToggle.addEventListener('click', toggleDiagSettings);
   const bSnap = $('bSnapToggle'); if (bSnap) bSnap.addEventListener('click', toggleSnap);
+  const bDims = $('bDimsToggle');
+  if (bDims) {
+    bDims.addEventListener('click', () => {
+      S.showDims = !S.showDims;
+      save();
+      bDims.classList.toggle('active', !!S.showDims);
+      draw();
+      msg(S.showDims ? 'Dimension lines shown.' : 'Dimension lines hidden.');
+    });
+  }
+
+  // Multi-select action bar buttons
+  $('bMultiSection')?.addEventListener('click', openMultiAssignSection);
+  $('bMultiCopy')?.addEventListener('click', multiCopy);
+  $('bMultiMove')?.addEventListener('click', multiMove);
+  $('bMultiMirror')?.addEventListener('click', multiMirror);
+  $('bMultiDelete')?.addEventListener('click', multiDelete);
+  $('bMultiClear')?.addEventListener('click', () => {
+    if (transformAction) {
+      cancelTransformAction();
+      msg('Action cancelled.');
+    } else {
+      clearMultiSelect();
+    }
+  });
+
+  // Diagram value probe HUD controls
+  $('bProbeClose')?.addEventListener('click', clearProbe);
+  $('probeSlider')?.addEventListener('input', e => {
+    if (!probe || !results) return;
+    const pct = parseFloat(e.target.value) || 0;
+    const newX = (pct / 100) * probe.L;
+    setProbe(probe.member, newX);
+  });
 
   // Drawer buttons
   const dNew = $('dActNew'); if (dNew) dNew.addEventListener('click', () => { closeDrawer(); newStructure(); });
@@ -1581,6 +2621,7 @@
     if (mod && e.key === 'Enter') { solve(); e.preventDefault(); return; }
     if (mod || e.altKey) return;
     if (k === 'escape') {
+      if (transformAction) { cancelTransformAction(); msg('Action cancelled.'); return; }
       if (isDrawerOpen()) { closeDrawer(); return; }
       if (zenMode) { toggleZen(false); return; }
       if (!$('modal').hidden) { closeDialog(); return; }
@@ -1589,7 +2630,7 @@
       return;
     }
     if (k === 'delete' || k === 'backspace') { deleteSelected(); e.preventDefault(); return; }
-    const map = { v: 'select', n: 'node', m: 'member', s: 'support', l: 'load', i: 'influence', d: 'delete' };
+    const map = { v: 'select', b: 'multiselect', n: 'node', m: 'member', s: 'support', l: 'load', i: 'influence', d: 'delete' };
     if (map[k]) setTool(map[k]); else if (k === 'f') fitView();
   });
   window.addEventListener('keyup', e => { if (e.key === ' ') spaceDown = false; });
@@ -1599,6 +2640,7 @@
 
   function installMobileBackPrompt() {
     window.handleAndroidBackPressed = function() {
+      if (transformAction) { cancelTransformAction(); msg('Action cancelled.'); return true; }
       if (isDrawerOpen()) { closeDrawer(); return true; }
       if (zenMode) { toggleZen(false); return true; }
       const modal = $('modal');
